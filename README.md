@@ -63,7 +63,9 @@ matters in space. Keys, damage, recoil and so on are in `GameData/Moon1265/Setti
 ### Building the plugin
 
 The C# code has to be compiled against your own copy of KSP 1.12.5. Install the
-[.NET SDK](https://dotnet.microsoft.com/download), then from the repo folder:
+[.NET SDK](https://dotnet.microsoft.com/download), then double-click **`build.bat`**
+(edit the `KSPDIR` line in it if your game isn't in `C:\Steam\steamapps\common\Kerbal Space Program`).
+Or run this from the repo folder:
 
 ```
 dotnet build Source\Moon1265\Moon1265.csproj -c Release -p:KSPDIR="C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program"

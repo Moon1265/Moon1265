@@ -4,3 +4,4 @@ obj/
 *.user
 *.suo
 GameData/Moon1265/Plugins/*.pdb
+build-log.txt
