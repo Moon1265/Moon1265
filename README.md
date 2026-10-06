@@ -53,9 +53,11 @@ menu), so every key belongs to MW2 mode:
 |---|---|
 | Mouse | look |
 | W A S D | move and strafe |
-| Shift | sprint |
+| Shift | sprint (hold) |
+| Shift, Shift (double-tap and hold) | tactical sprint: faster, rifle pointed up |
 | Space | jump |
 | C or Left Ctrl | crouch |
+| C or Left Ctrl while sprinting | combat slide (you can shoot while sliding, jump to cancel) |
 | Left mouse | fire (automatic) |
 | Right mouse | aim down sights |
 | R | reload |

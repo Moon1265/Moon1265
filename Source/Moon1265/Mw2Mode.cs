@@ -45,10 +45,10 @@ namespace Moon1265
         private readonly List<Renderer> hiddenRenderers = new List<Renderer>();
 
         // Input sampled in Update, consumed in FixedUpdate.
-        private Vector2 moveInput;
-        private bool sprintHeld;
-        private bool crouchHeld;
-        private bool jumpQueued;
+        private MoveInput moveInput;
+        private bool tacticalLatched;    // sprint was double-tapped and is still held
+        private float lastSprintTapAt = -10f;
+        private float speedFov;          // 0..1, smoothed extra FOV while tactical sprinting or sliding
 
         private Viewmodel viewmodel;
         private AudioSource audioSource;
@@ -135,7 +135,7 @@ namespace Moon1265
             if (FlightDriver.Pause)
             {
                 SetCursorLocked(false);
-                moveInput = Vector2.zero;
+                moveInput = default(MoveInput);
                 return;
             }
 
@@ -152,8 +152,10 @@ namespace Moon1265
         private void FixedUpdate()
         {
             if (!active || !StillValid() || FlightDriver.Pause) return;
-            movement.Step(lookForward, Up(), moveInput, sprintHeld, crouchHeld, aim > 0.5f, jumpQueued, Time.fixedDeltaTime);
-            jumpQueued = false;
+            movement.Step(lookForward, Up(), moveInput, Time.fixedDeltaTime);
+            // One-shot presses are consumed by the first physics step that sees them.
+            moveInput.Jump = false;
+            moveInput.SlidePressed = false;
         }
 
         private void LateUpdate()
@@ -165,7 +167,8 @@ namespace Moon1265
             KeepCameraFrameCurrent();
 
             PlaceCamera();
-            viewmodel.Animate(aim, reloading, movement.Sprinting, movement.Grounded ? movement.HorizontalSpeed : 0f, Time.deltaTime);
+            viewmodel.Animate(aim, reloading, movement.Sprinting && !movement.TacticalSprinting, movement.TacticalSprinting,
+                movement.SlideBlend, movement.Grounded ? movement.HorizontalSpeed : 0f, Time.deltaTime);
         }
 
         // ---------------------------------------------------------------- entering / leaving
@@ -264,8 +267,9 @@ namespace Moon1265
             audioSource.playOnAwake = false;
             audioSource.spatialBlend = 0f;
 
-            moveInput = Vector2.zero;
-            sprintHeld = crouchHeld = jumpQueued = false;
+            moveInput = default(MoveInput);
+            tacticalLatched = false;
+            speedFov = 0f;
             aim = 0f;
             bloom = 0f;
             reloading = false;
@@ -352,11 +356,27 @@ namespace Moon1265
         {
             float x = (Input.GetKey(Settings.RightKey) ? 1f : 0f) - (Input.GetKey(Settings.LeftKey) ? 1f : 0f);
             float y = (Input.GetKey(Settings.ForwardKey) ? 1f : 0f) - (Input.GetKey(Settings.BackKey) ? 1f : 0f);
-            moveInput = new Vector2(x, y);
-            crouchHeld = Input.GetKey(Settings.CrouchKey) || Input.GetKey(Settings.CrouchKeyAlt);
+            moveInput.Move = new Vector2(x, y);
+            moveInput.Crouch = Input.GetKey(Settings.CrouchKey) || Input.GetKey(Settings.CrouchKeyAlt);
+            moveInput.Aiming = Input.GetMouseButton(1) && !reloading;
+            moveInput.Firing = Input.GetMouseButton(0);
+
+            // Sprint is hold-to-sprint. A quick double tap (tap, then press and hold) is a tactical sprint.
+            bool sprintHeld = Input.GetKey(Settings.SprintKey);
+            if (Input.GetKeyDown(Settings.SprintKey))
+            {
+                if (Time.time - lastSprintTapAt <= Settings.DoubleTapTime) tacticalLatched = true;
+                lastSprintTapAt = Time.time;
+            }
+            // Firing, aiming, reloading, stopping or letting go of sprint all end a tactical sprint.
+            if (!sprintHeld || y <= 0.1f || moveInput.Firing || moveInput.Aiming || reloading) tacticalLatched = false;
+
             // Firing or reloading drops you out of a sprint, like MW2.
-            sprintHeld = Input.GetKey(Settings.SprintKey) && !Input.GetMouseButton(0) && !reloading;
-            if (Input.GetKeyDown(Settings.JumpKey)) jumpQueued = true;
+            moveInput.Sprint = sprintHeld && !moveInput.Firing && !reloading;
+            moveInput.TacticalSprint = tacticalLatched;
+
+            if (Input.GetKeyDown(Settings.JumpKey)) moveInput.Jump = true;
+            if (Input.GetKeyDown(Settings.CrouchKey) || Input.GetKeyDown(Settings.CrouchKeyAlt)) moveInput.SlidePressed = true;
         }
 
         /// <summary>"Up" for the controls: away from the centre of the body we're on.</summary>
@@ -382,7 +402,8 @@ namespace Moon1265
         private void PlaceCamera()
         {
             Vector3 up = Up();
-            Quaternion look = Quaternion.LookRotation(lookForward, up) * Quaternion.Euler(pitch, 0f, 0f);
+            float slide = movement != null ? movement.SlideBlend : 0f;
+            Quaternion look = Quaternion.LookRotation(lookForward, up) * Quaternion.Euler(pitch, 0f, Settings.SlideCameraTilt * slide);
 
             // Physics runs at a fixed rate; carry the body forward by its velocity since the last
             // physics step so the view glides instead of stepping at high frame rates.
@@ -390,7 +411,8 @@ namespace Moon1265
             Vector3 body = kerbal.transform.position;
             if (rb != null) body += rb.velocity * (Time.time - Time.fixedTime);
 
-            float eyeHeight = Settings.EyeHeight - Settings.CrouchEyeDrop * (movement != null ? movement.Crouch : 0f);
+            float eyeHeight = Settings.EyeHeight - Settings.CrouchEyeDrop * (movement != null ? movement.Crouch : 0f)
+                - Settings.SlideEyeDrop * slide;
             Vector3 eye = body + up * eyeHeight;
 
             // The FlightCamera component may sit above the rendering camera in the hierarchy,
@@ -407,7 +429,9 @@ namespace Moon1265
             float dt = Time.deltaTime;
             bool aiming = Input.GetMouseButton(1) && !reloading;
             aim = Mathf.MoveTowards(aim, aiming ? 1f : 0f, dt / AimTime);
-            flightCamera.SetFoV(Mathf.Lerp(Settings.FieldOfView, Settings.AimFieldOfView, aim));
+            bool fast = movement.TacticalSprinting || movement.Sliding;
+            speedFov = Mathf.MoveTowards(speedFov, fast ? 1f : 0f, dt * 4f);
+            flightCamera.SetFoV(Mathf.Lerp(Settings.FieldOfView, Settings.AimFieldOfView, aim) + Settings.SprintFovBoost * speedFov * (1f - aim));
             bloom = Mathf.MoveTowards(bloom, 0f, dt * 4f);
 
             if (reloading)
@@ -423,7 +447,8 @@ namespace Moon1265
                 return;
             }
 
-            if (Input.GetMouseButton(0) && Time.time >= nextShotAt)
+            // The rifle has to come down out of the sprint pose before it can fire.
+            if (Input.GetMouseButton(0) && Time.time >= nextShotAt && viewmodel.ReadyToFire)
             {
                 if (ammo > 0)
                 {
@@ -520,7 +545,7 @@ namespace Moon1265
             float cx = Screen.width / 2f;
             float cy = Screen.height / 2f;
 
-            if (aim < 0.9f && !movement.Sprinting)
+            if (aim < 0.9f && !movement.Sprinting && viewmodel.ReadyToFire)
             {
                 float spread = Mathf.Lerp(Settings.HipSpread, Settings.AimSpread, aim) + bloom;
                 DrawCrosshair(cx, cy, 8f + spread * 8f, new Color(1f, 1f, 1f, 0.85f * (1f - aim)));
@@ -546,7 +571,7 @@ namespace Moon1265
                 string toggle = (Settings.ToggleNeedsCtrl ? "Ctrl+" : "") + (Settings.ToggleNeedsShift ? "Shift+" : "") + Settings.ToggleKey;
                 ShadowLabel(new Rect(0f, 50f, Screen.width, 30f), "MW2 MODE  -  KSP controls are off.  [" + toggle + "] to exit", hintText);
                 ShadowLabel(new Rect(0f, 78f, Screen.width, 30f),
-                    "WASD move   Shift sprint   Space jump   " + Settings.CrouchKey + " crouch   LMB fire   RMB aim   " + Settings.ReloadKey + " reload", hintText);
+                    "WASD move   Shift sprint (double-tap: tactical)   Space jump   " + Settings.CrouchKey + " crouch (while sprinting: slide)   LMB fire   RMB aim   " + Settings.ReloadKey + " reload", hintText);
             }
         }
 

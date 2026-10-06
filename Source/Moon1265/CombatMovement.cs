@@ -4,6 +4,19 @@ using UnityEngine;
 
 namespace Moon1265
 {
+    /// <summary>What the player is asking the Kerbal to do this physics step.</summary>
+    internal struct MoveInput
+    {
+        public Vector2 Move;          // x = strafe (-1 left .. 1 right), y = forward (-1 .. 1)
+        public bool Sprint;           // sprint key held
+        public bool TacticalSprint;   // sprint key double-tapped and still held
+        public bool Crouch;           // crouch key held
+        public bool SlidePressed;     // crouch key pressed since the last step (slides if sprinting)
+        public bool Jump;             // jump key pressed since the last step
+        public bool Aiming;
+        public bool Firing;
+    }
+
     /// <summary>
     /// Shooter-style ground movement for an EVA Kerbal. While active it removes KSP's own
     /// walking, turning and upright-correction steps from the Kerbal's idle and swimming states
@@ -45,6 +58,12 @@ namespace Moon1265
         private float jumpGraceUntil;
         private float lastGroundedTime = -1f;
 
+        private Vector3 slideDirection;
+        private float slideSpeed;
+        private float slideStartedAt;
+        private float nextSlideAllowedAt;
+        private float tacticalLeft = -1f;   // seconds of tactical sprint left (-1 = not initialised)
+
         public CombatMovement(KerbalEVA eva)
         {
             this.eva = eva;
@@ -75,6 +94,11 @@ namespace Moon1265
         public float Crouch { get; private set; }
         public bool Grounded { get; private set; }
         public bool Sprinting { get; private set; }
+        /// <summary>Faster sprint with the rifle pointed up (double-tap sprint).</summary>
+        public bool TacticalSprinting { get; private set; }
+        public bool Sliding { get; private set; }
+        /// <summary>0..1, smoothed, for the camera and the gun.</summary>
+        public float SlideBlend { get; private set; }
         public bool Ragdolled { get; private set; }
         public float HorizontalSpeed { get; private set; }
 
@@ -114,17 +138,17 @@ namespace Moon1265
         private static void Nothing() { }
         private static bool Never(KFSMState state) { return false; }
 
-        /// <param name="move">x = strafe (-1 left .. 1 right), y = forward (-1 .. 1).</param>
-        public void Step(Vector3 lookForward, Vector3 up, Vector2 move, bool sprint, bool crouch, bool aiming, bool jump, float dt)
+        public void Step(Vector3 lookForward, Vector3 up, MoveInput input, float dt)
         {
-            Crouch = Mathf.MoveTowards(Crouch, crouch ? 1f : 0f, dt * 6f);
+            Crouch = Mathf.MoveTowards(Crouch, input.Crouch || Sliding ? 1f : 0f, dt * 6f);
+            SlideBlend = Mathf.MoveTowards(SlideBlend, Sliding ? 1f : 0f, dt * 8f);
 
             Rigidbody rb = eva.part.Rigidbody;
             if (rb == null || eva.vessel == null || eva.vessel.packed) return;
 
             Vector3 forward = Vector3.ProjectOnPlane(lookForward, up).normalized;
             Vector3 right = Vector3.Cross(up, forward);
-            Vector3 wish = forward * move.y + right * move.x;
+            Vector3 wish = forward * input.Move.y + right * input.Move.x;
             if (wish.sqrMagnitude > 1f) wish.Normalize();
 
             KFSMState state = eva.fsm.CurrentState;
@@ -132,6 +156,7 @@ namespace Moon1265
 
             if (state == eva.st_swim_idle || state == eva.st_swim_fwd)
             {
+                StopSprintAndSlide();
                 Swim(rb, forward, up, wish, dt);
                 return;
             }
@@ -141,10 +166,10 @@ namespace Moon1265
             {
                 // KSP only gets the active Kerbal back up while a movement key is held, and those
                 // keys are locked in MW2 mode, so start the recovery ourselves.
-                if (Ragdolled && (move != Vector2.zero || jump) && eva.canRecover && eva.fsm.TimeAtCurrentState > 0.2)
+                if (Ragdolled && (input.Move != Vector2.zero || input.Jump) && eva.canRecover && eva.fsm.TimeAtCurrentState > 0.2)
                     eva.fsm.RunEvent(eva.On_recover_start);
+                StopSprintAndSlide();
                 Grounded = false;
-                Sprinting = false;
                 HorizontalSpeed = 0f;
                 return;
             }
@@ -157,36 +182,74 @@ namespace Moon1265
             if (onFloor && Time.fixedTime >= jumpGraceUntil) lastGroundedTime = Time.fixedTime;
             Grounded = lastGroundedTime >= 0f && Time.fixedTime - lastGroundedTime < CoyoteTime;
 
-            Sprinting = sprint && !crouch && !aiming && Grounded && move.y > 0.1f;
-            float speed = crouch ? Settings.CrouchSpeed : Sprinting ? Settings.SprintSpeed : Settings.WalkSpeed;
-            if (aiming) speed *= Settings.AimSpeedMultiplier;
-
-            jump &= Grounded;
-            if (wish != Vector3.zero || jump) Unanchor();
-
             Vector3 velocity = rb.velocity;
-            if (Grounded)
+            Vector3 groundVelocity = Vector3.ProjectOnPlane(velocity, normal);
+
+            // Slide: crouch while sprinting. Uses last step's sprint state, since holding crouch
+            // ends the sprint in this one.
+            bool wasSprinting = Sprinting;
+            if (input.SlidePressed && !Sliding && Grounded && wasSprinting && Time.fixedTime >= nextSlideAllowedAt
+                && groundVelocity.magnitude > Settings.WalkSpeed * 0.9f)
+            {
+                Sliding = true;
+                slideStartedAt = Time.fixedTime;
+                slideDirection = Vector3.ProjectOnPlane(groundVelocity, up).normalized;
+                slideSpeed = Mathf.Max(Settings.SlideSpeed, groundVelocity.magnitude);
+            }
+
+            UpdateSprint(input, dt);
+
+            float speed = input.Crouch ? Settings.CrouchSpeed
+                : TacticalSprinting ? Settings.TacticalSprintSpeed
+                : Sprinting ? Settings.SprintSpeed
+                : Settings.WalkSpeed;
+            if (input.Aiming) speed *= Settings.AimSpeedMultiplier;
+
+            bool jump = input.Jump && Grounded;
+            if (wish != Vector3.zero || jump || Sliding) Unanchor();
+
+            if (Grounded && Sliding)
+            {
+                // Friction slows the slide; slopes speed it up or slow it down; a little steering.
+                float gravity = Mathf.Max(LocalGravity(), Settings.CombatGravity);
+                Vector3 downhill = Vector3.ProjectOnPlane(-up, normal);
+                slideSpeed += (Vector3.Dot(downhill, slideDirection) * gravity - Settings.SlideFriction) * dt;
+                if (wish != Vector3.zero)
+                    slideDirection = Vector3.RotateTowards(slideDirection, Vector3.ProjectOnPlane(wish, up).normalized,
+                        Settings.SlideSteering * Mathf.Deg2Rad * dt, 0f);
+
+                velocity = Vector3.ProjectOnPlane(slideDirection, normal).normalized * Mathf.Max(slideSpeed, 0f)
+                    + normal * Mathf.Min(Vector3.Dot(velocity, normal), 0f);
+
+                if (slideSpeed <= Settings.SlideEndSpeed || Time.fixedTime - slideStartedAt > Settings.SlideMaxTime)
+                    EndSlide();
+            }
+            else if (Grounded)
             {
                 Vector3 target = wish == Vector3.zero
                     ? Vector3.zero
                     : Vector3.ProjectOnPlane(wish, normal).normalized * (wish.magnitude * speed);
-                Vector3 along = Vector3.MoveTowards(Vector3.ProjectOnPlane(velocity, normal), target, Settings.GroundAcceleration * dt);
+                Vector3 along = Vector3.MoveTowards(groundVelocity, target, Settings.GroundAcceleration * dt);
                 // Keep motion into the ground (so gravity holds us down) but never bounce off it.
                 velocity = along + normal * Mathf.Min(Vector3.Dot(velocity, normal), 0f);
-
-                if (jump)
-                {
-                    velocity += up * Settings.JumpSpeed;
-                    jumpGraceUntil = Time.fixedTime + JumpGrace;
-                    lastGroundedTime = -1f;
-                }
             }
             else
             {
+                if (Sliding) EndSlide(); // went over an edge: keep the momentum, as a fall
                 Vector3 vertical = Vector3.Project(velocity, up);
                 Vector3 horizontal = Vector3.MoveTowards(velocity - vertical, wish * speed, Settings.AirAcceleration * dt);
                 velocity = horizontal + vertical;
             }
+
+            if (jump)
+            {
+                // Jumping out of a slide keeps its speed (slide-cancel).
+                if (Sliding) EndSlide();
+                velocity += up * Settings.JumpSpeed;
+                jumpGraceUntil = Time.fixedTime + JumpGrace;
+                lastGroundedTime = -1f;
+            }
+
             rb.velocity = velocity;
             HorizontalSpeed = Vector3.ProjectOnPlane(velocity, up).magnitude;
 
@@ -201,10 +264,40 @@ namespace Moon1265
             if (state != eva.st_land) FaceForward(rb, forward, up);
         }
 
+        /// <summary>Sprint and tactical sprint (with a limited, recharging tactical sprint).</summary>
+        private void UpdateSprint(MoveInput input, float dt)
+        {
+            float duration = Settings.TacticalSprintDuration;
+            if (tacticalLeft < 0f) tacticalLeft = duration;
+
+            bool canSprint = Grounded && !Sliding && !input.Crouch && !input.Aiming && !input.Firing && input.Move.y > 0.1f;
+            bool wantsTactical = canSprint && input.TacticalSprint && (duration <= 0f || tacticalLeft > 0f);
+
+            if (wantsTactical && duration > 0f)
+                tacticalLeft = Mathf.Max(0f, tacticalLeft - dt);
+            else if (!wantsTactical && duration > 0f && Settings.TacticalSprintRecharge > 0f)
+                tacticalLeft = Mathf.Min(duration, tacticalLeft + dt * duration / Settings.TacticalSprintRecharge);
+
+            TacticalSprinting = wantsTactical;
+            Sprinting = canSprint && (input.Sprint || input.TacticalSprint);
+        }
+
+        private void EndSlide()
+        {
+            Sliding = false;
+            nextSlideAllowedAt = Time.fixedTime + Settings.SlideCooldown;
+        }
+
+        private void StopSprintAndSlide()
+        {
+            if (Sliding) EndSlide();
+            Sprinting = false;
+            TacticalSprinting = false;
+        }
+
         private void Swim(Rigidbody rb, Vector3 forward, Vector3 up, Vector3 wish, float dt)
         {
             Grounded = false;
-            Sprinting = false;
             // Like stock swimming: move on the water surface and let buoyancy handle the height.
             float speed = Mathf.Max(eva.swimSpeed, Settings.CrouchSpeed);
             Vector3 flat = Vector3.MoveTowards(Vector3.ProjectOnPlane(rb.velocity, up), wish * speed, Settings.AirAcceleration * dt);

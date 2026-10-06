@@ -36,6 +36,21 @@ namespace Moon1265
         public static float AirAcceleration = 6f;
         public static float JumpSpeed = 3.5f;
         public static float CrouchEyeDrop = 0.3f;
+        // Tactical sprint: double-tap sprint and keep holding it. Faster, rifle pointed up.
+        public static float TacticalSprintSpeed = 7.5f;
+        public static float TacticalSprintDuration = 4f;   // seconds before it drops to a normal sprint (0 = unlimited)
+        public static float TacticalSprintRecharge = 3f;   // seconds to fully recharge
+        public static float DoubleTapTime = 0.3f;
+        // Slide: press crouch while sprinting.
+        public static float SlideSpeed = 8.5f;             // starting speed (or your sprint speed if faster)
+        public static float SlideFriction = 7f;            // m/s lost per second (slopes add or remove speed)
+        public static float SlideEndSpeed = 2.5f;
+        public static float SlideMaxTime = 1.4f;
+        public static float SlideSteering = 30f;           // degrees per second
+        public static float SlideCooldown = 0.5f;
+        public static float SlideEyeDrop = 0.12f;          // extra on top of the crouch drop
+        public static float SlideCameraTilt = 6f;          // degrees of roll
+        public static float SprintFovBoost = 5f;           // extra field of view while tactical sprinting or sliding
         // Gravity used in MW2 mode when the real gravity is weaker (0 = always use real gravity).
         // Keeps ground combat on low-gravity moons from turning into bunny hopping.
         public static float CombatGravity = 9.81f;
@@ -99,6 +114,19 @@ namespace Moon1265
             AirAcceleration = Float(n, "airAcceleration", AirAcceleration);
             JumpSpeed = Float(n, "jumpSpeed", JumpSpeed);
             CrouchEyeDrop = Float(n, "crouchEyeDrop", CrouchEyeDrop);
+            TacticalSprintSpeed = Float(n, "tacticalSprintSpeed", TacticalSprintSpeed);
+            TacticalSprintDuration = Float(n, "tacticalSprintDuration", TacticalSprintDuration);
+            TacticalSprintRecharge = Float(n, "tacticalSprintRecharge", TacticalSprintRecharge);
+            DoubleTapTime = Float(n, "doubleTapTime", DoubleTapTime);
+            SlideSpeed = Float(n, "slideSpeed", SlideSpeed);
+            SlideFriction = Float(n, "slideFriction", SlideFriction);
+            SlideEndSpeed = Float(n, "slideEndSpeed", SlideEndSpeed);
+            SlideMaxTime = Float(n, "slideMaxTime", SlideMaxTime);
+            SlideSteering = Float(n, "slideSteering", SlideSteering);
+            SlideCooldown = Float(n, "slideCooldown", SlideCooldown);
+            SlideEyeDrop = Float(n, "slideEyeDrop", SlideEyeDrop);
+            SlideCameraTilt = Float(n, "slideCameraTilt", SlideCameraTilt);
+            SprintFovBoost = Float(n, "sprintFovBoost", SprintFovBoost);
             CombatGravity = Float(n, "combatGravity", CombatGravity);
             StumbleThreshold = Float(n, "stumbleThreshold", StumbleThreshold);
 

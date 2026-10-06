@@ -20,6 +20,12 @@ namespace Moon1265
         private static readonly Vector3 AimPosition = new Vector3(0f, -0.073f, 0.3f);
         private static readonly Vector3 SprintPosition = new Vector3(0.12f, -0.24f, 0.32f);
         private static readonly Quaternion SprintRotation = Quaternion.Euler(10f, -35f, 15f);
+        // Tactical sprint: rifle held up across the chest, muzzle pointing at the sky.
+        private static readonly Vector3 TacticalPosition = new Vector3(0.14f, -0.16f, 0.24f);
+        private static readonly Quaternion TacticalRotation = Quaternion.Euler(-70f, -20f, 25f);
+        // Slide: rifle stays ready but cants inward a little.
+        private static readonly Vector3 SlideOffset = new Vector3(-0.03f, -0.02f, -0.02f);
+        private static readonly Quaternion SlideRotation = Quaternion.Euler(0f, 0f, 18f);
 
         private readonly Camera mainCamera;
         private readonly int savedMainCullingMask;
@@ -35,6 +41,8 @@ namespace Moon1265
         private float tracerUntil;
         private float reloadDip;     // 0..1, lowers the gun while reloading
         private float sprint;        // 0..1, sprint pose
+        private float tactical;      // 0..1, tactical sprint pose
+        private float slide;         // 0..1, slide pose
         private float bobPhase;
         private float bobAmount;
 
@@ -45,8 +53,11 @@ namespace Moon1265
             savedMainCullingMask = mainCamera.cullingMask;
             mainCamera.cullingMask &= ~(1 << ViewmodelLayer);
 
+            // Deliberately NOT a child of KSP's camera: KSP parents its camera under the EVA Kerbal,
+            // and anything KSP does to that hierarchy (scaling, re-parenting) would warp the rifle.
+            // Instead the pose is copied from the main camera every frame in Animate.
             var cameraObject = new GameObject("Moon1265_ViewmodelCamera");
-            cameraObject.transform.SetParent(mainCamera.transform, false);
+            cameraObject.transform.SetPositionAndRotation(mainCamera.transform.position, mainCamera.transform.rotation);
             camera = cameraObject.AddComponent<Camera>();
             camera.clearFlags = CameraClearFlags.Depth;   // draw over the world, keep its colours
             camera.cullingMask = 1 << ViewmodelLayer;
@@ -115,28 +126,46 @@ namespace Moon1265
             tracer.enabled = true;
         }
 
+        /// <summary>False while the rifle is still coming down out of a sprint pose.</summary>
+        public bool ReadyToFire { get { return Mathf.Max(sprint, tactical) < 0.35f; } }
+
         /// <param name="aim">0 = hip fire, 1 = fully aimed down sights.</param>
+        /// <param name="slideBlend">0..1, how far into a slide.</param>
         /// <param name="speed">Horizontal ground speed in m/s, for the walking bob.</param>
-        public void Animate(float aim, bool reloading, bool sprinting, float speed, float dt)
+        public void Animate(float aim, bool reloading, bool sprinting, bool tacticalSprinting, float slideBlend, float speed, float dt)
         {
+            // Follow the world camera exactly (see the constructor for why we're not its child).
+            Transform cameraTransform = camera.transform;
+            cameraTransform.SetPositionAndRotation(mainCamera.transform.position, mainCamera.transform.rotation);
+            cameraTransform.localScale = Vector3.one;
             camera.fieldOfView = mainCamera.fieldOfView;
 
             kick = Mathf.MoveTowards(kick, 0f, dt * 12f);
             reloadDip = Mathf.MoveTowards(reloadDip, reloading ? 1f : 0f, dt * 5f);
             sprint = Mathf.MoveTowards(sprint, sprinting ? 1f : 0f, dt * 6f);
+            tactical = Mathf.MoveTowards(tactical, tacticalSprinting ? 1f : 0f, dt * 5f);
+            slide = slideBlend;
 
             // Walking bob: a figure-eight sway that scales with speed and almost vanishes when aiming.
+            // Bigger and faster in a tactical sprint, none while sliding.
             bobPhase += dt * Mathf.Lerp(6f, 13f, Mathf.Clamp01(speed / 6f)) * (speed > 0.2f ? 1f : 0f);
             bobAmount = Mathf.MoveTowards(bobAmount, Mathf.Clamp01(speed / 4f), dt * 4f);
-            float bobScale = bobAmount * Mathf.Lerp(1f, 0.15f, aim);
+            float bobScale = bobAmount * Mathf.Lerp(1f, 0.15f, aim) * (1f + tactical) * (1f - slide);
             Vector3 bob = new Vector3(Mathf.Sin(bobPhase) * 0.012f, -Mathf.Abs(Mathf.Cos(bobPhase)) * 0.01f, 0f) * bobScale;
 
-            Vector3 position = Vector3.Lerp(Vector3.Lerp(HipPosition, AimPosition, aim), SprintPosition, sprint);
+            Vector3 position = Vector3.Lerp(HipPosition, AimPosition, aim);
+            position = Vector3.Lerp(position, SprintPosition, sprint);
+            position = Vector3.Lerp(position, TacticalPosition, tactical);
+            position += SlideOffset * slide * (1f - aim);
             position += bob + new Vector3(0f, -0.12f * reloadDip, -0.06f * kick);
+
+            Quaternion pose = Quaternion.Slerp(Quaternion.identity, SprintRotation, sprint);
+            pose = Quaternion.Slerp(pose, TacticalRotation, tactical);
+            pose = Quaternion.Slerp(Quaternion.identity, SlideRotation, slide * (1f - aim)) * pose;
+
             root.transform.localPosition = position;
-            root.transform.localRotation =
-                Quaternion.Slerp(Quaternion.identity, SprintRotation, sprint) *
-                Quaternion.Euler(-6f * kick + 25f * reloadDip, 0f, -20f * reloadDip);
+            root.transform.localRotation = pose * Quaternion.Euler(-6f * kick + 25f * reloadDip, 0f, -20f * reloadDip);
+            root.transform.localScale = Vector3.one;
 
             if (Time.time > flashUntil) flash.SetActive(false);
             if (Time.time > tracerUntil) tracer.enabled = false;
