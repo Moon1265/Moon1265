@@ -29,6 +29,7 @@ namespace Moon1265
         private readonly GameObject flash;
         private readonly LineRenderer tracer;
 
+        private Vector3 tracerEnd;
         private float kick;          // 0..1, decays after each shot
         private float flashUntil;
         private float tracerUntil;
@@ -62,24 +63,27 @@ namespace Moon1265
             root.transform.localPosition = HipPosition;
             Transform t = root.transform;
 
-            Color metal = new Color(0.16f, 0.16f, 0.17f);
-            Color polymer = new Color(0.27f, 0.25f, 0.21f);
+            // Distinct tones so the parts read as separate pieces.
+            Color receiverMetal = new Color(0.30f, 0.31f, 0.33f);
+            Color darkMetal = new Color(0.20f, 0.20f, 0.22f);
+            Color polymer = new Color(0.42f, 0.38f, 0.30f);
+            Quaternion none = Quaternion.identity;
 
-            Shapes.Visual(PrimitiveType.Cube, t, new Vector3(0f, 0f, 0f), new Vector3(0.06f, 0.09f, 0.42f), metal);            // receiver
-            Shapes.Visual(PrimitiveType.Cube, t, new Vector3(0f, -0.02f, -0.29f), new Vector3(0.05f, 0.08f, 0.18f), polymer);  // stock
-            Shapes.Visual(PrimitiveType.Cube, t, new Vector3(0f, -0.11f, 0.08f), Quaternion.Euler(12f, 0f, 0f), new Vector3(0.04f, 0.14f, 0.07f), metal); // magazine
-            Shapes.Visual(PrimitiveType.Cube, t, new Vector3(0f, -0.09f, -0.1f), Quaternion.Euler(-15f, 0f, 0f), new Vector3(0.04f, 0.1f, 0.05f), polymer); // grip
-            Shapes.Visual(PrimitiveType.Cube, t, new Vector3(0f, 0.005f, 0.24f), new Vector3(0.055f, 0.07f, 0.12f), polymer);  // handguard
-            Shapes.Visual(PrimitiveType.Cylinder, t, new Vector3(0f, 0.015f, 0.38f), Quaternion.Euler(90f, 0f, 0f), new Vector3(0.022f, 0.09f, 0.022f), metal); // barrel
-            Shapes.Visual(PrimitiveType.Cube, t, new Vector3(0f, 0.058f, -0.08f), new Vector3(0.03f, 0.025f, 0.03f), metal);   // rear sight
-            Shapes.Visual(PrimitiveType.Cube, t, new Vector3(0f, 0.058f, 0.2f), new Vector3(0.008f, 0.025f, 0.008f), metal);   // front post
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0f, 0f), none, new Vector3(0.06f, 0.09f, 0.42f), receiverMetal);          // receiver
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, -0.02f, -0.29f), none, new Vector3(0.05f, 0.08f, 0.18f), polymer);         // stock
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, -0.11f, 0.08f), Quaternion.Euler(12f, 0f, 0f), new Vector3(0.04f, 0.14f, 0.07f), darkMetal); // magazine
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, -0.09f, -0.1f), Quaternion.Euler(-15f, 0f, 0f), new Vector3(0.04f, 0.1f, 0.05f), polymer);  // grip
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0.005f, 0.24f), none, new Vector3(0.055f, 0.07f, 0.12f), polymer);         // handguard
+            Shapes.ShadedVisual(PrimitiveType.Cylinder, t, new Vector3(0f, 0.015f, 0.38f), Quaternion.Euler(90f, 0f, 0f), new Vector3(0.022f, 0.09f, 0.022f), darkMetal); // barrel
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0.058f, -0.08f), none, new Vector3(0.03f, 0.025f, 0.03f), darkMetal);      // rear sight
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0.058f, 0.2f), none, new Vector3(0.008f, 0.025f, 0.008f), darkMetal);      // front post
 
             muzzle = new GameObject("Muzzle").transform;
             muzzle.gameObject.layer = ViewmodelLayer;
             muzzle.SetParent(t, false);
             muzzle.localPosition = new Vector3(0f, 0.015f, 0.48f);
 
-            flash = Shapes.Visual(PrimitiveType.Sphere, muzzle, Vector3.zero, new Vector3(0.07f, 0.07f, 0.12f), new Color(1f, 0.85f, 0.4f));
+            flash = Shapes.GlowVisual(PrimitiveType.Sphere, muzzle, Vector3.zero, new Vector3(0.06f, 0.06f, 0.11f), new Color(1f, 0.8f, 0.35f, 1f));
             flash.SetActive(false);
 
             // The tracer flies out into the world, so it is drawn by the normal camera.
@@ -87,9 +91,11 @@ namespace Moon1265
             tracer = tracerObject.AddComponent<LineRenderer>();
             tracer.useWorldSpace = true;
             tracer.positionCount = 2;
-            tracer.startWidth = 0.015f;
-            tracer.endWidth = 0.008f;
-            tracer.sharedMaterial = Shapes.Material(new Color(1f, 0.9f, 0.5f));
+            tracer.startWidth = 0.006f;
+            tracer.endWidth = 0.004f;
+            tracer.sharedMaterial = Shapes.Glow();
+            tracer.startColor = new Color(1f, 0.85f, 0.45f, 1f);
+            tracer.endColor = new Color(1f, 0.7f, 0.3f, 0.6f);
             tracer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             tracer.receiveShadows = false;
             tracer.enabled = false;
@@ -103,12 +109,9 @@ namespace Moon1265
             flash.transform.localRotation = Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
             flash.SetActive(true);
 
-            // The muzzle is drawn by the viewmodel camera; find the matching point in the world
-            // so the tracer appears to leave the barrel.
-            Vector3 screen = camera.WorldToViewportPoint(muzzle.position);
-            Vector3 start = mainCamera.ViewportToWorldPoint(new Vector3(screen.x, screen.y, 0.6f));
-            tracer.SetPosition(0, start);
-            tracer.SetPosition(1, hitPoint);
+            // The tracer's start is placed in Animate, once the camera and the kicked gun are in
+            // their final positions for this frame.
+            tracerEnd = hitPoint;
             tracer.enabled = true;
         }
 
@@ -137,6 +140,15 @@ namespace Moon1265
 
             if (Time.time > flashUntil) flash.SetActive(false);
             if (Time.time > tracerUntil) tracer.enabled = false;
+
+            if (tracer.enabled)
+            {
+                // The muzzle is drawn by the viewmodel camera; find the matching point in the world
+                // so the tracer leaves the barrel exactly.
+                Vector3 screen = camera.WorldToViewportPoint(muzzle.position);
+                tracer.SetPosition(0, mainCamera.ViewportToWorldPoint(new Vector3(screen.x, screen.y, 0.6f)));
+                tracer.SetPosition(1, tracerEnd);
+            }
         }
 
         public void Destroy()

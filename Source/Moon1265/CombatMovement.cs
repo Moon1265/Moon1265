@@ -6,9 +6,10 @@ namespace Moon1265
 {
     /// <summary>
     /// Shooter-style ground movement for an EVA Kerbal. While active it removes KSP's own
-    /// walking, turning and upright-correction steps from the Kerbal's idle states and drives
-    /// the rigidbody directly, so movement is instant, strafes, sprints and jumps.
-    /// KSP stays in charge of everything else (ragdoll, recovering, swimming, ladders).
+    /// walking, turning and upright-correction steps from the Kerbal's idle and swimming states
+    /// and drives the rigidbody directly, so movement is instant, strafes, sprints and jumps.
+    /// KSP stays in charge of ragdolling and recovering, but we trigger the recovery ourselves
+    /// because KSP only lets a Kerbal get up while its (locked) movement keys are held.
     /// </summary>
     internal class CombatMovement
     {
@@ -16,38 +17,65 @@ namespace Moon1265
         private static readonly HashSet<string> StrippedSteps = new HashSet<string>
         {
             "UpdateMovement", "UpdateHeading", "correctGroundedRotation",
-            "UpdatePackLinear", "UpdatePackAngular", "UpdateOrientationPID", "CheckLadderTriggers",
+            "UpdatePackLinear", "UpdatePackAngular", "UpdateOrientationPID",
         };
 
-        // KSP pins a Kerbal that stands still to the ground; we unpin it when we want to move.
+        // KSP pins a Kerbal that has stood still for 0.5 s to the ground with a joint. RemoveRBAnchor
+        // only queues the joint's destruction for the end of the frame, which would cancel the
+        // velocity we set in this physics step, so we also destroy the joint ourselves.
         private static readonly MethodInfo RemoveAnchor =
             typeof(KerbalEVA).GetMethod("RemoveRBAnchor", BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly FieldInfo AnchorJoint =
+            typeof(KerbalEVA).GetField("anchorJoint", BindingFlags.Instance | BindingFlags.NonPublic);
 
         // What counts as ground: 0 parts, 15 local scenery, 19 physical objects, 28 terrain colliders.
         private const int GroundMask = (1 << 0) | (1 << 15) | (1 << 19) | (1 << 28);
+        private const float ProbeRadius = 0.12f;
+        private const float ProbeLift = 0.2f;
+        private const float GroundedGap = 0.08f;   // feet this close to a floor count as standing
+        private const float CoyoteTime = 0.1f;     // stay "grounded" briefly over small bumps
         private const float JumpGrace = 0.3f;
+        private const float CombatGravityHeight = 200f; // only top up gravity this close to the terrain
 
         private readonly KerbalEVA eva;
         private readonly List<KeyValuePair<KFSMState, KFSMCallback>> originalSteps = new List<KeyValuePair<KFSMState, KFSMCallback>>();
+        private readonly List<KeyValuePair<KFSMEvent, KFSMEventCondition>> originalConditions = new List<KeyValuePair<KFSMEvent, KFSMEventCondition>>();
         private readonly float originalStumbleThreshold;
 
         private float jumpGraceUntil;
+        private float lastGroundedTime = -1f;
 
         public CombatMovement(KerbalEVA eva)
         {
             this.eva = eva;
-            Strip(eva.st_idle_gr);
-            Strip(eva.st_idle_b_gr);
-            Strip(eva.st_idle_fl);
-
             originalStumbleThreshold = eva.stumbleThreshold;
-            eva.stumbleThreshold = Mathf.Max(originalStumbleThreshold, Settings.StumbleThreshold);
+            try
+            {
+                Strip(eva.st_idle_gr);
+                Strip(eva.st_idle_b_gr);
+                Strip(eva.st_idle_fl);
+                Strip(eva.st_swim_idle);
+                Strip(eva.st_swim_fwd);
+
+                // Climb, ladder-grab and board prompts would keep popping up but can't be used.
+                Disable(eva.On_clamberGrabStart);
+                Disable(eva.On_ladderGrabStart);
+                Disable(eva.On_boardPart);
+
+                eva.stumbleThreshold = Mathf.Max(originalStumbleThreshold, Settings.StumbleThreshold);
+            }
+            catch
+            {
+                Release();
+                throw;
+            }
         }
 
         /// <summary>0 = standing, 1 = fully crouched (smoothed).</summary>
         public float Crouch { get; private set; }
         public bool Grounded { get; private set; }
         public bool Sprinting { get; private set; }
+        public bool Ragdolled { get; private set; }
         public float HorizontalSpeed { get; private set; }
 
         /// <summary>Puts KSP's own movement back exactly as it was.</summary>
@@ -56,6 +84,9 @@ namespace Moon1265
             foreach (KeyValuePair<KFSMState, KFSMCallback> saved in originalSteps)
                 saved.Key.OnFixedUpdate = saved.Value;
             originalSteps.Clear();
+            foreach (KeyValuePair<KFSMEvent, KFSMEventCondition> saved in originalConditions)
+                saved.Key.OnCheckCondition = saved.Value;
+            originalConditions.Clear();
             if (eva != null) eva.stumbleThreshold = originalStumbleThreshold;
         }
 
@@ -73,7 +104,15 @@ namespace Moon1265
             state.OnFixedUpdate = kept ?? Nothing;
         }
 
+        private void Disable(KFSMEvent fsmEvent)
+        {
+            if (fsmEvent == null) return;
+            originalConditions.Add(new KeyValuePair<KFSMEvent, KFSMEventCondition>(fsmEvent, fsmEvent.OnCheckCondition));
+            fsmEvent.OnCheckCondition = Never;
+        }
+
         private static void Nothing() { }
+        private static bool Never(KFSMState state) { return false; }
 
         /// <param name="move">x = strafe (-1 left .. 1 right), y = forward (-1 .. 1).</param>
         public void Step(Vector3 lookForward, Vector3 up, Vector2 move, bool sprint, bool crouch, bool aiming, bool jump, float dt)
@@ -83,34 +122,51 @@ namespace Moon1265
             Rigidbody rb = eva.part.Rigidbody;
             if (rb == null || eva.vessel == null || eva.vessel.packed) return;
 
-            KFSMState state = eva.fsm.CurrentState;
-            bool controllable = state == eva.st_idle_gr || state == eva.st_idle_b_gr || state == eva.st_idle_fl || state == eva.st_land;
-            if (!controllable)
-            {
-                // Ragdoll, recovering, swimming, ladder... let KSP handle it.
-                Grounded = false;
-                Sprinting = false;
-                return;
-            }
-
-            Grounded = state != eva.st_idle_fl && Time.fixedTime >= jumpGraceUntil;
-
             Vector3 forward = Vector3.ProjectOnPlane(lookForward, up).normalized;
             Vector3 right = Vector3.Cross(up, forward);
             Vector3 wish = forward * move.y + right * move.x;
             if (wish.sqrMagnitude > 1f) wish.Normalize();
+
+            KFSMState state = eva.fsm.CurrentState;
+            Ragdolled = state == eva.st_ragdoll;
+
+            if (state == eva.st_swim_idle || state == eva.st_swim_fwd)
+            {
+                Swim(rb, forward, up, wish, dt);
+                return;
+            }
+
+            bool controllable = state == eva.st_idle_gr || state == eva.st_idle_b_gr || state == eva.st_idle_fl || state == eva.st_land;
+            if (!controllable)
+            {
+                // KSP only gets the active Kerbal back up while a movement key is held, and those
+                // keys are locked in MW2 mode, so start the recovery ourselves.
+                if (Ragdolled && (move != Vector2.zero || jump) && eva.canRecover && eva.fsm.TimeAtCurrentState > 0.2)
+                    eva.fsm.RunEvent(eva.On_recover_start);
+                Grounded = false;
+                Sprinting = false;
+                HorizontalSpeed = 0f;
+                return;
+            }
+
+            Vector3 normal;
+            float gap = GroundGap(up, out normal);
+            // Our own floor probe decides; KSP's state is only trusted as a looser fallback in case the
+            // probe's idea of where the feet are is a little off.
+            bool onFloor = gap < GroundedGap || (gap < 0.5f && state != eva.st_idle_fl);
+            if (onFloor && Time.fixedTime >= jumpGraceUntil) lastGroundedTime = Time.fixedTime;
+            Grounded = lastGroundedTime >= 0f && Time.fixedTime - lastGroundedTime < CoyoteTime;
 
             Sprinting = sprint && !crouch && !aiming && Grounded && move.y > 0.1f;
             float speed = crouch ? Settings.CrouchSpeed : Sprinting ? Settings.SprintSpeed : Settings.WalkSpeed;
             if (aiming) speed *= Settings.AimSpeedMultiplier;
 
             jump &= Grounded;
-            if ((wish != Vector3.zero || jump) && RemoveAnchor != null) RemoveAnchor.Invoke(eva, null);
+            if (wish != Vector3.zero || jump) Unanchor();
 
             Vector3 velocity = rb.velocity;
             if (Grounded)
             {
-                Vector3 normal = GroundNormal(up);
                 Vector3 target = wish == Vector3.zero
                     ? Vector3.zero
                     : Vector3.ProjectOnPlane(wish, normal).normalized * (wish.magnitude * speed);
@@ -122,6 +178,7 @@ namespace Moon1265
                 {
                     velocity += up * Settings.JumpSpeed;
                     jumpGraceUntil = Time.fixedTime + JumpGrace;
+                    lastGroundedTime = -1f;
                 }
             }
             else
@@ -133,34 +190,61 @@ namespace Moon1265
             rb.velocity = velocity;
             HorizontalSpeed = Vector3.ProjectOnPlane(velocity, up).magnitude;
 
-            // Top gravity up to CombatGravity so low-gravity moons still play like ground combat.
+            // Top gravity up to CombatGravity near the ground, so low-gravity moons still play like
+            // ground combat. Not in orbit or high above the terrain (e.g. on a space station).
+            float height = eva.vessel.heightFromTerrain;
             float extraGravity = Settings.CombatGravity - LocalGravity();
-            if (Settings.CombatGravity > 0f && extraGravity > 0f) rb.AddForce(-up * extraGravity, ForceMode.Acceleration);
+            if (Settings.CombatGravity > 0f && extraGravity > 0f && height >= 0f && height < CombatGravityHeight)
+                rb.AddForce(-up * extraGravity, ForceMode.Acceleration);
 
             // Stand upright, facing where we look. (Landing has its own short recovery animation.)
-            if (state != eva.st_land)
-            {
-                rb.MoveRotation(Quaternion.LookRotation(forward, up));
-                rb.angularVelocity = Vector3.zero;
-            }
+            if (state != eva.st_land) FaceForward(rb, forward, up);
         }
 
-        private Vector3 GroundNormal(Vector3 up)
+        private void Swim(Rigidbody rb, Vector3 forward, Vector3 up, Vector3 wish, float dt)
         {
-            Vector3 origin = eva.transform.position + up * 0.2f;
-            RaycastHit[] hits = Physics.RaycastAll(origin, -up, 2f, GroundMask, QueryTriggerInteraction.Ignore);
+            Grounded = false;
+            Sprinting = false;
+            // Like stock swimming: move on the water surface and let buoyancy handle the height.
+            float speed = Mathf.Max(eva.swimSpeed, Settings.CrouchSpeed);
+            Vector3 flat = Vector3.MoveTowards(Vector3.ProjectOnPlane(rb.velocity, up), wish * speed, Settings.AirAcceleration * dt);
+            rb.velocity = flat;
+            HorizontalSpeed = flat.magnitude;
+            FaceForward(rb, forward, up);
+        }
+
+        private static void FaceForward(Rigidbody rb, Vector3 forward, Vector3 up)
+        {
+            rb.MoveRotation(Quaternion.LookRotation(forward, up));
+            rb.angularVelocity = Vector3.zero;
+        }
+
+        private void Unanchor()
+        {
+            Joint joint = AnchorJoint != null ? AnchorJoint.GetValue(eva) as Joint : null;
+            if (RemoveAnchor != null) RemoveAnchor.Invoke(eva, null); // clears KSP's anchor bookkeeping
+            if (joint != null) Object.DestroyImmediate(joint);
+        }
+
+        /// <summary>
+        /// Distance from the Kerbal's feet down to a walkable floor (walls and steep faces don't count),
+        /// or float.MaxValue if there is none within reach. A sphere cast, so ledge edges still count.
+        /// </summary>
+        private float GroundGap(Vector3 up, out Vector3 normal)
+        {
+            normal = up;
+            Vector3 origin = eva.transform.position + up * ProbeLift;
             float best = float.MaxValue;
-            Vector3 normal = up;
-            foreach (RaycastHit hit in hits)
+            foreach (RaycastHit hit in Physics.SphereCastAll(origin, ProbeRadius, -up, 2f, GroundMask, QueryTriggerInteraction.Ignore))
             {
-                if (hit.distance >= best) continue;
+                if (hit.distance <= 0f || hit.distance >= best) continue; // skip overlaps at the start
+                if (Vector3.Dot(hit.normal, up) <= 0.5f) continue;        // steeper than ~60 degrees
                 Part part = hit.collider.GetComponentInParent<Part>();
                 if (part != null && part.vessel == eva.vessel) continue;
                 best = hit.distance;
                 normal = hit.normal;
             }
-            // Treat anything steeper than ~60 degrees as a wall, not a floor.
-            return Vector3.Dot(normal, up) > 0.5f ? normal : up;
+            return best == float.MaxValue ? float.MaxValue : best + ProbeRadius - ProbeLift - eva.halfHeight;
         }
 
         private float LocalGravity()

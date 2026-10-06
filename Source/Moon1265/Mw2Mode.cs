@@ -144,6 +144,7 @@ namespace Moon1265
 
             ReadMovementInput();
             UpdateLook();
+            PlaceCamera();   // this frame's view, so shots go where the crosshair is now
             UpdateWeapon();
         }
 
@@ -191,7 +192,21 @@ namespace Moon1265
             if (CameraManager.Instance != null && CameraManager.Instance.currentCameraMode != CameraManager.CameraMode.Flight) return false;
 
             kerbal = vessel.FindPartModuleImplementing<KerbalEVA>();
-            return kerbal != null;
+            if (kerbal == null || kerbal.fsm == null) return false;
+
+            // Ladders, swimming off, ragdolls, the jetpack and construction mode all need KSP's own
+            // EVA keys, which MW2 mode locks; only start from standing or walking on the ground.
+            KFSMState s = kerbal.fsm.CurrentState;
+            bool onGround = s == kerbal.st_idle_gr || s == kerbal.st_idle_b_gr || s == kerbal.st_land
+                || s == kerbal.st_walk_acd || s == kerbal.st_walk_fps || s == kerbal.st_run_acd || s == kerbal.st_run_fps
+                || s == kerbal.st_bound_gr_acd || s == kerbal.st_bound_gr_fps;
+            if (!onGround || kerbal.InConstructionMode || kerbal.isRagdoll || kerbal.OnALadder || kerbal.JetpackDeployed)
+            {
+                ScreenMessages.PostScreenMessage("MW2 mode: stand on the ground first (jetpack off, not on a ladder)", 3f, ScreenMessageStyle.UPPER_CENTER);
+                kerbal = null;
+                return false;
+            }
+            return true;
         }
 
         private bool StillValid()
@@ -212,7 +227,21 @@ namespace Moon1265
             savedFov = flightCamera.FieldOfView;
 
             InputLockManager.SetControlLock(LockedControls, LockId);
+            active = true;
+            try
+            {
+                SetUp();
+            }
+            catch
+            {
+                // Never leave KSP's controls locked because something went wrong.
+                Exit();
+                throw;
+            }
+        }
 
+        private void SetUp()
+        {
             // Stop KSP's orbit camera from moving the camera; we place it ourselves every frame.
             flightCamera.DeactivateUpdate();
             KeepCameraFrameCurrent();
@@ -237,13 +266,15 @@ namespace Moon1265
             bloom = 0f;
             reloading = false;
             hintUntil = Time.time + HintDuration;
-            active = true;
 
             PlaceCamera();
         }
 
         private void Exit()
         {
+            // Give KSP its controls back first, whatever else happens.
+            InputLockManager.RemoveControlLock(LockId);
+            SetCursorLocked(false);
             if (!active) return;
             active = false;
 
@@ -273,8 +304,6 @@ namespace Moon1265
             // KSP may have snapshotted our zoomed FOV (e.g. when the map opened); make it restore the player's own.
             if (cameraManager != null && cameraManager.existingFlightFoV > 0f) cameraManager.existingFlightFoV = savedFov;
 
-            InputLockManager.RemoveControlLock(LockId);
-            SetCursorLocked(false);
             reloading = false;
             kerbal = null;
         }
@@ -496,6 +525,9 @@ namespace Moon1265
 
             if (Time.time < hitmarkerUntil) DrawHitmarker(cx, cy, hitmarkerKill ? new Color(1f, 0.25f, 0.2f) : Color.white);
             if (uiHidden) return; // F2: keep just the crosshair, like the rest of KSP's UI
+
+            if (movement.Ragdolled)
+                ShadowLabel(new Rect(0f, cy + 60f, Screen.width, 30f), "Knocked down - press WASD or Space to get up", hintText);
 
             float right = Screen.width - 40f;
             float bottom = Screen.height - 40f;
