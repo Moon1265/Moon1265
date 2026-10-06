@@ -53,8 +53,9 @@ namespace Moon1265
             savedMainCullingMask = mainCamera.cullingMask;
             mainCamera.cullingMask &= ~(1 << ViewmodelLayer);
 
-            // Deliberately NOT a child of KSP's camera: KSP parents its camera under the EVA Kerbal,
-            // and anything KSP does to that hierarchy (scaling, re-parenting) would warp the rifle.
+            // Deliberately NOT a child of KSP's camera: KSP parents its camera under the EVA Kerbal, and
+            // when a Kerbal gets up from a ragdoll KSP copies poses across that whole hierarchy by
+            // object name. That is what broke the rifle apart (its pieces were all called "Cube").
             // Instead the pose is copied from the main camera every frame in Animate.
             var cameraObject = new GameObject("Moon1265_ViewmodelCamera");
             cameraObject.transform.SetPositionAndRotation(mainCamera.transform.position, mainCamera.transform.rotation);
@@ -80,14 +81,14 @@ namespace Moon1265
             Color polymer = new Color(0.42f, 0.38f, 0.30f);
             Quaternion none = Quaternion.identity;
 
-            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0f, 0f), none, new Vector3(0.06f, 0.09f, 0.42f), receiverMetal);          // receiver
-            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, -0.02f, -0.29f), none, new Vector3(0.05f, 0.08f, 0.18f), polymer);         // stock
-            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, -0.11f, 0.08f), Quaternion.Euler(12f, 0f, 0f), new Vector3(0.04f, 0.14f, 0.07f), darkMetal); // magazine
-            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, -0.09f, -0.1f), Quaternion.Euler(-15f, 0f, 0f), new Vector3(0.04f, 0.1f, 0.05f), polymer);  // grip
-            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0.005f, 0.24f), none, new Vector3(0.055f, 0.07f, 0.12f), polymer);         // handguard
-            Shapes.ShadedVisual(PrimitiveType.Cylinder, t, new Vector3(0f, 0.015f, 0.38f), Quaternion.Euler(90f, 0f, 0f), new Vector3(0.022f, 0.09f, 0.022f), darkMetal); // barrel
-            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0.058f, -0.08f), none, new Vector3(0.03f, 0.025f, 0.03f), darkMetal);      // rear sight
-            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0.058f, 0.2f), none, new Vector3(0.008f, 0.025f, 0.008f), darkMetal);      // front post
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0f, 0f), none, new Vector3(0.06f, 0.09f, 0.42f), receiverMetal).name = "Receiver";
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, -0.02f, -0.29f), none, new Vector3(0.05f, 0.08f, 0.18f), polymer).name = "Stock";
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, -0.11f, 0.08f), Quaternion.Euler(12f, 0f, 0f), new Vector3(0.04f, 0.14f, 0.07f), darkMetal).name = "Magazine";
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, -0.09f, -0.1f), Quaternion.Euler(-15f, 0f, 0f), new Vector3(0.04f, 0.1f, 0.05f), polymer).name = "Grip";
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0.005f, 0.24f), none, new Vector3(0.055f, 0.07f, 0.12f), polymer).name = "Handguard";
+            Shapes.ShadedVisual(PrimitiveType.Cylinder, t, new Vector3(0f, 0.015f, 0.38f), Quaternion.Euler(90f, 0f, 0f), new Vector3(0.022f, 0.09f, 0.022f), darkMetal).name = "Barrel";
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0.058f, -0.08f), none, new Vector3(0.03f, 0.025f, 0.03f), darkMetal).name = "RearSight";
+            Shapes.ShadedVisual(PrimitiveType.Cube, t, new Vector3(0f, 0.058f, 0.2f), none, new Vector3(0.008f, 0.025f, 0.008f), darkMetal).name = "FrontPost";
 
             muzzle = new GameObject("Muzzle").transform;
             muzzle.gameObject.layer = ViewmodelLayer;
@@ -95,6 +96,7 @@ namespace Moon1265
             muzzle.localPosition = new Vector3(0f, 0.015f, 0.48f);
 
             flash = Shapes.GlowVisual(PrimitiveType.Sphere, muzzle, Vector3.zero, new Vector3(0.06f, 0.06f, 0.11f), new Color(1f, 0.8f, 0.35f, 1f));
+            flash.name = "MuzzleFlash";
             flash.SetActive(false);
 
             // The tracer flies out into the world, so it is drawn by the normal camera.
