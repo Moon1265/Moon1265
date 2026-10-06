@@ -1,5 +1,8 @@
 # Moon1265: Dethmun
 
+> **Work in progress:** the first-person EVA and rifle code in `Source/` is a first draft
+> that has not been compiled or tested yet. The moon itself works on its own.
+
 A new moon for Kerbin for **Kerbal Space Program 1.12.5**: a perfectly flat, grey moon
 with a trench running all the way around its equator, Death Star style.
 
@@ -40,6 +43,34 @@ Handy numbers for the trench run:
 It works with existing saves too, as long as nothing else uses
 `flightGlobalsIndex = 1265`.
 
+## First-person EVA and rifle (draft)
+
+On EVA, press **Y** to look through your Kerbal's eyes. Then:
+
+| Control | Action |
+|---|---|
+| Mouse | look |
+| WASD / jetpack keys | move, same as normal EVA |
+| Left mouse | fire (automatic) |
+| Right mouse | aim down sights |
+| T | reload |
+| Y | back to the normal camera |
+
+Bullets hit Kerbals (4 hits) and ship parts (more hits for heavier parts), push them
+around, and blow them up when their health runs out. Firing pushes you backwards, which
+matters in space. Keys, damage, recoil and so on are in `GameData/Moon1265/Settings.cfg`.
+
+### Building the plugin
+
+The C# code has to be compiled against your own copy of KSP 1.12.5. Install the
+[.NET SDK](https://dotnet.microsoft.com/download), then from the repo folder:
+
+```
+dotnet build Source\Moon1265\Moon1265.csproj -c Release -p:KSPDIR="C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program"
+```
+
+This puts `Moon1265.dll` in `GameData/Moon1265/Plugins` and copies the whole mod into your game.
+
 ## Tuning the trench
 
 - **Width:** run `python3 tools/generate_textures.py --trench-width 300` (any number of
@@ -60,10 +91,13 @@ the map-view mesh gets rebuilt.
 GameData/Moon1265/
   Dethmun.cfg                 Kopernicus body definition
   Moon1265.version            KSP-AVC version file (KSP 1.12.5)
+  Settings.cfg                first-person and rifle settings
+  Plugins/                    compiled Moon1265.dll goes here
   PluginData/height.png       heightmap (white = surface, black = trench)
   PluginData/surface_color.png  ground colour close up
   PluginData/biomes.png       biome map
   PluginData/scaled_color.png   map-view / distant texture
   PluginData/scaled_normal.png  flat normal map
 tools/generate_textures.py    regenerates all the textures
+Source/Moon1265/              C# plugin: first-person EVA camera and rifle
 ```

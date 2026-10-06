@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>Moon1265</AssemblyName>
+    <RootNamespace>Moon1265</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <!--
+    Point KSPDIR at your Kerbal Space Program install, e.g.
+      dotnet build -c Release -p:KSPDIR="C:\Program Files (x86)\Steam\steamapps\common\Kerbal Space Program"
+    or set it as an environment variable.
+  -->
+  <PropertyGroup>
+    <KSPManaged Condition="'$(KSPManaged)' == '' And Exists('$(KSPDIR)/KSP_x64_Data/Managed')">$(KSPDIR)/KSP_x64_Data/Managed</KSPManaged>
+    <KSPManaged Condition="'$(KSPManaged)' == '' And Exists('$(KSPDIR)/KSP_Data/Managed')">$(KSPDIR)/KSP_Data/Managed</KSPManaged>
+    <KSPManaged Condition="'$(KSPManaged)' == '' And Exists('$(KSPDIR)/KSP.app/Contents/Resources/Data/Managed')">$(KSPDIR)/KSP.app/Contents/Resources/Data/Managed</KSPManaged>
+  </PropertyGroup>
+
+  <Target Name="CheckKSPDIR" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(KSPManaged)' == ''" Text="Could not find KSP's Managed folder. Set KSPDIR to your KSP install (or KSPManaged to its Managed folder)." />
+  </Target>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp"><HintPath>$(KSPManaged)/Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(KSPManaged)/UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(KSPManaged)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Assembly-CSharp-firstpass"><HintPath>$(KSPManaged)/Assembly-CSharp-firstpass.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.IMGUIModule"><HintPath>$(KSPManaged)/UnityEngine.IMGUIModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(KSPManaged)/UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(KSPManaged)/UnityEngine.InputLegacyModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AudioModule"><HintPath>$(KSPManaged)/UnityEngine.AudioModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(KSPManaged)/UnityEngine.TextRenderingModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <!-- Copy the built plugin into the mod's GameData folder (and into the game, if KSPDIR is set). -->
+  <Target Name="CopyToGameData" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)/../../GameData/Moon1265/Plugins" />
+    <ItemGroup>
+      <ModFiles Include="$(MSBuildProjectDirectory)/../../GameData/Moon1265/**/*" Exclude="$(MSBuildProjectDirectory)/../../GameData/Moon1265/**/.gitkeep;$(MSBuildProjectDirectory)/../../GameData/Moon1265/Plugins/PluginData/**" />
+    </ItemGroup>
+    <Copy Condition="'$(KSPDIR)' != '' And Exists('$(KSPDIR)/GameData')" SourceFiles="@(ModFiles)" DestinationFiles="@(ModFiles->'$(KSPDIR)/GameData/Moon1265/%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
+</Project>
