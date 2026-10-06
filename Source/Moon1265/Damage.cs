@@ -11,6 +11,10 @@ namespace Moon1265
         /// <returns>True if the hit destroyed the part.</returns>
         public static bool Apply(Part part, float amount, Vector3 point, Vector3 direction)
         {
+            // Vessels "on rails" (packed, e.g. landed ships more than ~350 m away) can't be pushed or
+            // safely exploded; BDArmory skips them too.
+            if (part.vessel == null || !part.vessel.loaded || part.vessel.packed) return false;
+
             Rigidbody rb = part.Rigidbody;
             if (rb != null) rb.AddForceAtPosition(direction * Settings.BulletImpulse, point, ForceMode.Impulse);
 
@@ -29,9 +33,15 @@ namespace Moon1265
             return true;
         }
 
+        /// <summary>True for Kerbals, including ones sitting in external command seats.</summary>
+        public static bool IsKerbal(Part part)
+        {
+            return part.FindModuleImplementing<KerbalEVA>() != null;
+        }
+
         public static float MaxHealth(Part part)
         {
-            if (part.vessel != null && part.vessel.isEVA) return Settings.KerbalHealth;
+            if (IsKerbal(part)) return Settings.KerbalHealth;
             return Settings.PartHealthBase + Settings.PartHealthPerTonne * part.mass;
         }
 

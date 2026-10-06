@@ -1,23 +1,38 @@
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 
 namespace Moon1265
 {
     /// <summary>
-    /// First-person mode for EVA Kerbals: takes over the flight camera, puts it behind the
-    /// Kerbal's eyes with mouse look, and gives them a rifle that damages Kerbals and ship parts.
+    /// MW2 mode for EVA Kerbals, toggled with Ctrl+Shift+Y. While it is on:
+    ///  - every KSP key binding is locked out (Escape still pauses), so all keys belong to MW2 mode;
+    ///  - the camera sits in the Kerbal's head with mouse look;
+    ///  - KSP's EVA walking is replaced by shooter movement (see CombatMovement);
+    ///  - the Kerbal carries a rifle that damages Kerbals and ship parts.
     /// </summary>
     [KSPAddon(KSPAddon.Startup.Flight, false)]
-    public class FirstPersonController : MonoBehaviour
+    public class Mw2Mode : MonoBehaviour
     {
+        private const string LockId = "Moon1265_MW2Mode";
+        // Every KSP control except the pause menu.
+        private const ControlTypes LockedControls = ControlTypes.All & ~ControlTypes.PAUSE;
+
         // Layers a bullet can hit: 0 Default (parts), 15 Local Scenery (terrain, buildings),
-        // 17 EVA, 19 PhysicalObjects, 28 TerrainColliders.
-        private const int HitMask = (1 << 0) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 28);
-        private const float HintDuration = 8f;
+        // 17 EVA, 19 PhysicalObjects, 26 wheel and landing-gear colliders, 28 TerrainColliders.
+        private const int HitMask = (1 << 0) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 26) | (1 << 28);
+        private const float HintDuration = 10f;
         private const float AimTime = 0.15f;
+        private const float NearClip = 0.05f;
+
+        // FlightCamera only refreshes its reference frame in its own LateUpdate, which we switch off.
+        // Parts of KerbalEVA still read it as "up", so we keep it current ourselves.
+        private static readonly FieldInfo CameraFrameField =
+            typeof(FlightCamera).GetField("tgtFoR", BindingFlags.Instance | BindingFlags.NonPublic);
 
         private bool active;
         private KerbalEVA kerbal;
+        private CombatMovement movement;
 
         private FlightCamera flightCamera;
         private Transform cameraRig;
@@ -30,6 +45,12 @@ namespace Moon1265
         private Vector3 lookForward;
         private float pitch;
         private readonly List<Renderer> hiddenRenderers = new List<Renderer>();
+
+        // Input sampled in Update, consumed in FixedUpdate.
+        private Vector2 moveInput;
+        private bool sprintHeld;
+        private bool crouchHeld;
+        private bool jumpQueued;
 
         private Viewmodel viewmodel;
         private AudioSource audioSource;
@@ -59,11 +80,13 @@ namespace Moon1265
         private void Start()
         {
             GameEvents.onVesselChange.Add(OnVesselChange);
+            GameEvents.OnCameraChange.Add(OnCameraChange);
         }
 
         private void OnDestroy()
         {
             GameEvents.onVesselChange.Remove(OnVesselChange);
+            GameEvents.OnCameraChange.Remove(OnCameraChange);
             Exit();
             Damage.Clear();
         }
@@ -73,15 +96,30 @@ namespace Moon1265
             Exit();
         }
 
+        private void OnCameraChange(CameraManager.CameraMode mode)
+        {
+            if (!active) return;
+            if (mode != CameraManager.CameraMode.Flight)
+            {
+                Exit();
+                return;
+            }
+            // Something switched KSP's camera back on; take it back.
+            flightCamera.DeactivateUpdate();
+            mainCamera.nearClipPlane = NearClip;
+        }
+
         private void Update()
         {
+            bool togglePressed = TogglePressed();
+
             if (!active)
             {
-                if (Input.GetKeyDown(Settings.FirstPersonKey) && CanEnter()) Enter();
+                if (togglePressed && KeysAllowed() && CanEnter()) Enter();
                 return;
             }
 
-            if (!StillValid() || Input.GetKeyDown(Settings.FirstPersonKey))
+            if (togglePressed || !StillValid())
             {
                 Exit();
                 return;
@@ -90,22 +128,56 @@ namespace Moon1265
             if (FlightDriver.Pause)
             {
                 SetCursorLocked(false);
+                moveInput = Vector2.zero;
                 return;
             }
 
             SetCursorLocked(true);
+            // Stop KSP treating our clicks as world clicks (e.g. double-click to target a vessel).
+            Mouse.Left.ClearMouseState();
+
+            ReadMovementInput();
             UpdateLook();
             UpdateWeapon();
+        }
+
+        private void FixedUpdate()
+        {
+            if (!active || !StillValid() || FlightDriver.Pause) return;
+            movement.Step(lookForward, Up(), moveInput, sprintHeld, crouchHeld, aim > 0.5f, jumpQueued, Time.fixedDeltaTime);
+            jumpQueued = false;
         }
 
         private void LateUpdate()
         {
             if (!active || !StillValid()) return;
+
+            // Re-assert our hold on the camera every frame; some KSP paths quietly switch it back on.
+            if (flightCamera.updateActive) flightCamera.DeactivateUpdate();
+            if (mainCamera.nearClipPlane > NearClip) mainCamera.nearClipPlane = NearClip;
+            if (CameraFrameField != null) CameraFrameField.SetValue(flightCamera, FlightGlobals.GetFoR(FoRModes.SRF_NORTH));
+
             PlaceCamera();
-            viewmodel.Animate(aim, reloading, Time.deltaTime);
+            viewmodel.Animate(aim, reloading, movement.Sprinting, movement.Grounded ? movement.HorizontalSpeed : 0f, Time.deltaTime);
         }
 
         // ---------------------------------------------------------------- entering / leaving
+
+        private static bool TogglePressed()
+        {
+            if (!Input.GetKeyDown(Settings.ToggleKey)) return false;
+            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            return (!Settings.ToggleNeedsCtrl || ctrl) && (!Settings.ToggleNeedsShift || shift);
+        }
+
+        /// <summary>Not paused, not typing in a text box, no KSP dialog holding the controls.</summary>
+        private static bool KeysAllowed()
+        {
+            return !FlightDriver.Pause
+                && GUIUtility.keyboardControl == 0
+                && InputLockManager.IsUnlocked(ControlTypes.EVA_INPUT);
+        }
 
         private bool CanEnter()
         {
@@ -132,12 +204,14 @@ namespace Moon1265
 
             savedLocalPosition = cameraRig.localPosition;
             savedLocalRotation = cameraRig.localRotation;
-            savedFov = mainCamera.fieldOfView;
+            savedFov = flightCamera.FieldOfView;
             savedNearClip = mainCamera.nearClipPlane;
+
+            InputLockManager.SetControlLock(LockedControls, LockId);
 
             // Stop KSP's orbit camera from moving the camera; we place it ourselves every frame.
             flightCamera.DeactivateUpdate();
-            mainCamera.nearClipPlane = 0.05f;
+            mainCamera.nearClipPlane = NearClip;
             flightCamera.SetFoV(Settings.FieldOfView);
 
             Vector3 up = Up();
@@ -147,11 +221,14 @@ namespace Moon1265
             pitch = 0f;
 
             HideKerbal();
-            viewmodel = new Viewmodel(mainCamera.transform);
+            movement = new CombatMovement(kerbal);
+            viewmodel = new Viewmodel(mainCamera);
             audioSource = mainCamera.gameObject.AddComponent<AudioSource>();
             audioSource.playOnAwake = false;
             audioSource.spatialBlend = 0f;
 
+            moveInput = Vector2.zero;
+            sprintHeld = crouchHeld = jumpQueued = false;
             aim = 0f;
             bloom = 0f;
             reloading = false;
@@ -166,6 +243,9 @@ namespace Moon1265
             if (!active) return;
             active = false;
 
+            if (movement != null) movement.Release();
+            movement = null;
+
             ShowKerbal();
             if (viewmodel != null) viewmodel.Destroy();
             viewmodel = null;
@@ -178,12 +258,19 @@ namespace Moon1265
                 cameraRig.localRotation = savedLocalRotation;
             }
             if (mainCamera != null) mainCamera.nearClipPlane = savedNearClip;
+
+            CameraManager cameraManager = CameraManager.Instance;
             if (flightCamera != null)
             {
-                flightCamera.SetFoV(savedFov);
+                bool inFlightView = cameraManager == null || cameraManager.currentCameraMode == CameraManager.CameraMode.Flight;
+                if (inFlightView) flightCamera.SetFoV(savedFov);
+                else flightCamera.FieldOfView = savedFov; // KSP reapplies it when returning to the flight camera
                 flightCamera.ActivateUpdate();
             }
+            // KSP may have snapshotted our zoomed FOV (e.g. when the map opened); make it restore the player's own.
+            if (cameraManager != null && cameraManager.existingFlightFoV > 0f) cameraManager.existingFlightFoV = savedFov;
 
+            InputLockManager.RemoveControlLock(LockId);
             SetCursorLocked(false);
             reloading = false;
             kerbal = null;
@@ -192,9 +279,11 @@ namespace Moon1265
         private void HideKerbal()
         {
             hiddenRenderers.Clear();
+            // KSP parents the camera pivot under the EVA Kerbal, so skip anything belonging to the camera.
+            Transform pivot = flightCamera.GetPivot();
             foreach (Renderer r in kerbal.part.GetComponentsInChildren<Renderer>())
             {
-                if (!r.enabled) continue;
+                if (!r.enabled || (pivot != null && r.transform.IsChildOf(pivot))) continue;
                 r.enabled = false;
                 hiddenRenderers.Add(r);
             }
@@ -213,9 +302,20 @@ namespace Moon1265
             Cursor.visible = !locked;
         }
 
-        // ---------------------------------------------------------------- camera
+        // ---------------------------------------------------------------- input and camera
 
-        /// <summary>"Up" for the look controls: away from the centre of the body we're near.</summary>
+        private void ReadMovementInput()
+        {
+            float x = (Input.GetKey(Settings.RightKey) ? 1f : 0f) - (Input.GetKey(Settings.LeftKey) ? 1f : 0f);
+            float y = (Input.GetKey(Settings.ForwardKey) ? 1f : 0f) - (Input.GetKey(Settings.BackKey) ? 1f : 0f);
+            moveInput = new Vector2(x, y);
+            crouchHeld = Input.GetKey(Settings.CrouchKey) || Input.GetKey(Settings.CrouchKeyAlt);
+            // Firing or reloading drops you out of a sprint, like MW2.
+            sprintHeld = Input.GetKey(Settings.SprintKey) && !Input.GetMouseButton(0) && !reloading;
+            if (Input.GetKeyDown(Settings.JumpKey)) jumpQueued = true;
+        }
+
+        /// <summary>"Up" for the controls: away from the centre of the body we're on.</summary>
         private Vector3 Up()
         {
             Vessel vessel = kerbal.vessel;
@@ -240,8 +340,14 @@ namespace Moon1265
             Vector3 up = Up();
             Quaternion look = Quaternion.LookRotation(lookForward, up) * Quaternion.Euler(pitch, 0f, 0f);
 
-            Transform body = kerbal.transform;
-            Vector3 eye = body.position + body.up * Settings.EyeHeight;
+            // Physics runs at a fixed rate; carry the body forward by its velocity since the last
+            // physics step so the view glides instead of stepping at high frame rates.
+            Rigidbody rb = kerbal.part.Rigidbody;
+            Vector3 body = kerbal.transform.position;
+            if (rb != null) body += rb.velocity * (Time.time - Time.fixedTime);
+
+            float eyeHeight = Settings.EyeHeight - Settings.CrouchEyeDrop * (movement != null ? movement.Crouch : 0f);
+            Vector3 eye = body + up * eyeHeight;
 
             // The FlightCamera component may sit above the rendering camera in the hierarchy,
             // so move the rig such that the camera itself ends up at the eye, looking along `look`.
@@ -301,6 +407,7 @@ namespace Moon1265
 
             Transform cam = mainCamera.transform;
             float spread = Mathf.Lerp(Settings.HipSpread, Settings.AimSpread, aim) + bloom;
+            if (!movement.Grounded || movement.HorizontalSpeed > Settings.WalkSpeed * 0.5f) spread *= 1.5f;
             Vector2 offset = Random.insideUnitCircle * spread;
             Vector3 direction = cam.rotation * (Quaternion.Euler(offset.y, offset.x, 0f) * Vector3.forward);
 
@@ -309,7 +416,7 @@ namespace Moon1265
             viewmodel.Fire(didHit ? hit.point : cam.position + direction * Settings.Range);
             Play(Sounds.Gunshot, 1f);
 
-            // Recoil: kick the view up, bloom the spread, and push the shooter back (you'll feel it in space).
+            // Recoil: kick the view up, bloom the spread, and push the shooter back.
             pitch = Mathf.Clamp(pitch - Settings.Recoil * Mathf.Lerp(1f, 0.5f, aim), -89f, 89f);
             lookForward = Quaternion.AngleAxis(Random.Range(-0.3f, 0.3f) * Settings.Recoil, Up()) * lookForward;
             bloom = Mathf.Min(bloom + 0.4f * (1f - 0.7f * aim), 3f);
@@ -322,7 +429,7 @@ namespace Moon1265
             Part part = hit.collider.GetComponentInParent<Part>();
             if (part == null) return;
 
-            bool isKerbal = part.vessel != null && part.vessel.isEVA;
+            bool isKerbal = Damage.IsKerbal(part);
             bool destroyed = Damage.Apply(part, Settings.Damage, hit.point, direction);
             if (destroyed)
             {
@@ -369,12 +476,12 @@ namespace Moon1265
             float cx = Screen.width / 2f;
             float cy = Screen.height / 2f;
 
-            if (aim < 0.9f)
+            if (aim < 0.9f && !movement.Sprinting)
             {
                 float spread = Mathf.Lerp(Settings.HipSpread, Settings.AimSpread, aim) + bloom;
                 DrawCrosshair(cx, cy, 8f + spread * 8f, new Color(1f, 1f, 1f, 0.85f * (1f - aim)));
             }
-            else
+            else if (aim >= 0.9f)
             {
                 DrawRect(cx - 1.5f, cy - 1.5f, 3f, 3f, new Color(1f, 0.2f, 0.2f, 0.9f));
             }
@@ -388,8 +495,10 @@ namespace Moon1265
 
             if (Time.time < hintUntil)
             {
-                string hint = "[" + Settings.FirstPersonKey + "] exit first person    [LMB] fire    [RMB] aim    [" + Settings.ReloadKey + "] reload";
-                ShadowLabel(new Rect(0f, 60f, Screen.width, 30f), hint, hintText);
+                string toggle = (Settings.ToggleNeedsCtrl ? "Ctrl+" : "") + (Settings.ToggleNeedsShift ? "Shift+" : "") + Settings.ToggleKey;
+                ShadowLabel(new Rect(0f, 50f, Screen.width, 30f), "MW2 MODE  -  KSP controls are off.  [" + toggle + "] to exit", hintText);
+                ShadowLabel(new Rect(0f, 78f, Screen.width, 30f),
+                    "WASD move   Shift sprint   Space jump   " + Settings.CrouchKey + " crouch   LMB fire   RMB aim   " + Settings.ReloadKey + " reload", hintText);
             }
         }
 

@@ -1,7 +1,7 @@
 # Moon1265: Dethmun
 
-> **Work in progress:** the first-person EVA and rifle code in `Source/` is a first draft
-> that has not been compiled or tested yet. The moon itself works on its own.
+> **Work in progress:** MW2 mode (first-person ground combat) in `Source/` is an early
+> draft. The moon itself works on its own.
 
 A new moon for Kerbin for **Kerbal Space Program 1.12.5**: a perfectly flat, grey moon
 with a trench running all the way around its equator, Death Star style.
@@ -43,22 +43,31 @@ Handy numbers for the trench run:
 It works with existing saves too, as long as nothing else uses
 `flightGlobalsIndex = 1265`.
 
-## First-person EVA and rifle (draft)
+## MW2 mode: first-person ground combat (draft)
 
-On EVA, press **Y** to look through your Kerbal's eyes. Then:
+On EVA, press **Ctrl+Shift+Y** to switch MW2 mode on (and again to switch it off).
+While it's on, **all of KSP's own keys are switched off** (Escape still opens the pause
+menu), so every key belongs to MW2 mode:
 
 | Control | Action |
 |---|---|
 | Mouse | look |
-| WASD / jetpack keys | move, same as normal EVA |
+| W A S D | move and strafe |
+| Shift | sprint |
+| Space | jump |
+| C or Left Ctrl | crouch |
 | Left mouse | fire (automatic) |
 | Right mouse | aim down sights |
-| T | reload |
-| Y | back to the normal camera |
+| R | reload |
+| Ctrl+Shift+Y | leave MW2 mode, KSP controls come back |
 
-Bullets hit Kerbals (4 hits) and ship parts (more hits for heavier parts), push them
-around, and blow them up when their health runs out. Firing pushes you backwards, which
-matters in space. Keys, damage, recoil and so on are in `GameData/Moon1265/Settings.cfg`.
+MW2 mode replaces KSP's slow EVA walk with shooter movement, and on low-gravity worlds it
+tops gravity up to 1 g (`combatGravity`) so fights stay on the ground. The jetpack isn't
+part of MW2 mode; leave it to use the jetpack normally.
+
+Bullets hit Kerbals (4 hits) and ship parts (more hits for heavier parts, wheels and gear
+included), push them around, and blow them up when their health runs out. Keys, speeds,
+damage and so on are in `GameData/Moon1265/Settings.cfg`.
 
 ### Building the plugin
 
@@ -93,7 +102,7 @@ the map-view mesh gets rebuilt.
 GameData/Moon1265/
   Dethmun.cfg                 Kopernicus body definition
   Moon1265.version            KSP-AVC version file (KSP 1.12.5)
-  Settings.cfg                first-person and rifle settings
+  Settings.cfg                MW2 mode settings (keys, movement, rifle)
   Plugins/                    compiled Moon1265.dll goes here
   PluginData/height.png       heightmap (white = surface, black = trench)
   PluginData/surface_color.png  ground colour close up
@@ -101,5 +110,5 @@ GameData/Moon1265/
   PluginData/scaled_color.png   map-view / distant texture
   PluginData/scaled_normal.png  flat normal map
 tools/generate_textures.py    regenerates all the textures
-Source/Moon1265/              C# plugin: first-person EVA camera and rifle
+Source/Moon1265/              C# plugin: MW2 mode (camera, movement, rifle)
 ```

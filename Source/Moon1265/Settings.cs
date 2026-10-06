@@ -10,11 +10,37 @@ namespace Moon1265
     /// </summary>
     internal static class Settings
     {
-        // Controls
-        public static KeyCode FirstPersonKey = KeyCode.Y;
-        public static KeyCode ReloadKey = KeyCode.T;
+        // Controls. MW2 mode is toggled with Ctrl+Shift+Y by default; while it is on, every KSP
+        // key binding is locked out and these keys belong to MW2 mode.
+        public static KeyCode ToggleKey = KeyCode.Y;
+        public static bool ToggleNeedsCtrl = true;
+        public static bool ToggleNeedsShift = true;
+        public static KeyCode ForwardKey = KeyCode.W;
+        public static KeyCode BackKey = KeyCode.S;
+        public static KeyCode LeftKey = KeyCode.A;
+        public static KeyCode RightKey = KeyCode.D;
+        public static KeyCode SprintKey = KeyCode.LeftShift;
+        public static KeyCode JumpKey = KeyCode.Space;
+        public static KeyCode CrouchKey = KeyCode.C;
+        public static KeyCode CrouchKeyAlt = KeyCode.LeftControl;
+        public static KeyCode ReloadKey = KeyCode.R;
         public static float MouseSensitivity = 2f;
         public static bool InvertMouse = false;
+
+        // Movement (metres, seconds). Replaces KSP's EVA walking while MW2 mode is on.
+        public static float WalkSpeed = 3.5f;
+        public static float SprintSpeed = 6f;
+        public static float CrouchSpeed = 1.75f;
+        public static float AimSpeedMultiplier = 0.6f;
+        public static float GroundAcceleration = 40f;
+        public static float AirAcceleration = 6f;
+        public static float JumpSpeed = 3.5f;
+        public static float CrouchEyeDrop = 0.3f;
+        // Gravity used in MW2 mode when the real gravity is weaker (0 = always use real gravity).
+        // Keeps ground combat on low-gravity moons from turning into bunny hopping.
+        public static float CombatGravity = 9.81f;
+        // KSP ragdolls a Kerbal that lands faster than 3.5 m/s; raised while MW2 mode is on.
+        public static float StumbleThreshold = 15f;
 
         // Camera
         public static float FieldOfView = 70f;
@@ -50,10 +76,31 @@ namespace Moon1265
             if (nodes == null || nodes.Length == 0) return;
             ConfigNode n = nodes[0];
 
-            FirstPersonKey = Key(n, "firstPersonKey", FirstPersonKey);
+            ToggleKey = Key(n, "toggleKey", ToggleKey);
+            ToggleNeedsCtrl = Bool(n, "toggleNeedsCtrl", ToggleNeedsCtrl);
+            ToggleNeedsShift = Bool(n, "toggleNeedsShift", ToggleNeedsShift);
+            ForwardKey = Key(n, "forwardKey", ForwardKey);
+            BackKey = Key(n, "backKey", BackKey);
+            LeftKey = Key(n, "leftKey", LeftKey);
+            RightKey = Key(n, "rightKey", RightKey);
+            SprintKey = Key(n, "sprintKey", SprintKey);
+            JumpKey = Key(n, "jumpKey", JumpKey);
+            CrouchKey = Key(n, "crouchKey", CrouchKey);
+            CrouchKeyAlt = Key(n, "crouchKeyAlt", CrouchKeyAlt);
             ReloadKey = Key(n, "reloadKey", ReloadKey);
             MouseSensitivity = Float(n, "mouseSensitivity", MouseSensitivity);
             InvertMouse = Bool(n, "invertMouse", InvertMouse);
+
+            WalkSpeed = Float(n, "walkSpeed", WalkSpeed);
+            SprintSpeed = Float(n, "sprintSpeed", SprintSpeed);
+            CrouchSpeed = Float(n, "crouchSpeed", CrouchSpeed);
+            AimSpeedMultiplier = Float(n, "aimSpeedMultiplier", AimSpeedMultiplier);
+            GroundAcceleration = Float(n, "groundAcceleration", GroundAcceleration);
+            AirAcceleration = Float(n, "airAcceleration", AirAcceleration);
+            JumpSpeed = Float(n, "jumpSpeed", JumpSpeed);
+            CrouchEyeDrop = Float(n, "crouchEyeDrop", CrouchEyeDrop);
+            CombatGravity = Float(n, "combatGravity", CombatGravity);
+            StumbleThreshold = Float(n, "stumbleThreshold", StumbleThreshold);
 
             FieldOfView = Float(n, "fieldOfView", FieldOfView);
             AimFieldOfView = Float(n, "aimFieldOfView", AimFieldOfView);
