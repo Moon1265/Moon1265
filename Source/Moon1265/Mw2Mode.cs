@@ -23,7 +23,6 @@ namespace Moon1265
         private const int HitMask = (1 << 0) | (1 << 15) | (1 << 17) | (1 << 19) | (1 << 26) | (1 << 28);
         private const float HintDuration = 10f;
         private const float AimTime = 0.15f;
-        private const float NearClip = 0.05f;
 
         // FlightCamera only refreshes its reference frame in its own LateUpdate, which we switch off.
         // Parts of KerbalEVA still read it as "up", so we keep it current ourselves.
@@ -40,7 +39,6 @@ namespace Moon1265
         private Vector3 savedLocalPosition;
         private Quaternion savedLocalRotation;
         private float savedFov;
-        private float savedNearClip;
 
         private Vector3 lookForward;
         private float pitch;
@@ -67,6 +65,8 @@ namespace Moon1265
         private int kerbalKills;
         private int partsDestroyed;
 
+        private bool uiHidden;
+
         private GUIStyle bigText;
         private GUIStyle smallText;
         private GUIStyle hintText;
@@ -81,12 +81,16 @@ namespace Moon1265
         {
             GameEvents.onVesselChange.Add(OnVesselChange);
             GameEvents.OnCameraChange.Add(OnCameraChange);
+            GameEvents.onHideUI.Add(OnHideUI);
+            GameEvents.onShowUI.Add(OnShowUI);
         }
 
         private void OnDestroy()
         {
             GameEvents.onVesselChange.Remove(OnVesselChange);
             GameEvents.OnCameraChange.Remove(OnCameraChange);
+            GameEvents.onHideUI.Remove(OnHideUI);
+            GameEvents.onShowUI.Remove(OnShowUI);
             Exit();
             Damage.Clear();
         }
@@ -95,6 +99,9 @@ namespace Moon1265
         {
             Exit();
         }
+
+        private void OnHideUI() { uiHidden = true; }
+        private void OnShowUI() { uiHidden = false; }
 
         private void OnCameraChange(CameraManager.CameraMode mode)
         {
@@ -106,7 +113,6 @@ namespace Moon1265
             }
             // Something switched KSP's camera back on; take it back.
             flightCamera.DeactivateUpdate();
-            mainCamera.nearClipPlane = NearClip;
         }
 
         private void Update()
@@ -154,8 +160,7 @@ namespace Moon1265
 
             // Re-assert our hold on the camera every frame; some KSP paths quietly switch it back on.
             if (flightCamera.updateActive) flightCamera.DeactivateUpdate();
-            if (mainCamera.nearClipPlane > NearClip) mainCamera.nearClipPlane = NearClip;
-            if (CameraFrameField != null) CameraFrameField.SetValue(flightCamera, FlightGlobals.GetFoR(FoRModes.SRF_NORTH));
+            KeepCameraFrameCurrent();
 
             PlaceCamera();
             viewmodel.Animate(aim, reloading, movement.Sprinting, movement.Grounded ? movement.HorizontalSpeed : 0f, Time.deltaTime);
@@ -205,13 +210,12 @@ namespace Moon1265
             savedLocalPosition = cameraRig.localPosition;
             savedLocalRotation = cameraRig.localRotation;
             savedFov = flightCamera.FieldOfView;
-            savedNearClip = mainCamera.nearClipPlane;
 
             InputLockManager.SetControlLock(LockedControls, LockId);
 
             // Stop KSP's orbit camera from moving the camera; we place it ourselves every frame.
             flightCamera.DeactivateUpdate();
-            mainCamera.nearClipPlane = NearClip;
+            KeepCameraFrameCurrent();
             flightCamera.SetFoV(Settings.FieldOfView);
 
             Vector3 up = Up();
@@ -257,7 +261,6 @@ namespace Moon1265
                 cameraRig.localPosition = savedLocalPosition;
                 cameraRig.localRotation = savedLocalRotation;
             }
-            if (mainCamera != null) mainCamera.nearClipPlane = savedNearClip;
 
             CameraManager cameraManager = CameraManager.Instance;
             if (flightCamera != null)
@@ -274,6 +277,11 @@ namespace Moon1265
             SetCursorLocked(false);
             reloading = false;
             kerbal = null;
+        }
+
+        private void KeepCameraFrameCurrent()
+        {
+            if (CameraFrameField != null) CameraFrameField.SetValue(flightCamera, FlightGlobals.GetFoR(FoRModes.SRF_NORTH));
         }
 
         private void HideKerbal()
@@ -487,6 +495,7 @@ namespace Moon1265
             }
 
             if (Time.time < hitmarkerUntil) DrawHitmarker(cx, cy, hitmarkerKill ? new Color(1f, 0.25f, 0.2f) : Color.white);
+            if (uiHidden) return; // F2: keep just the crosshair, like the rest of KSP's UI
 
             float right = Screen.width - 40f;
             float bottom = Screen.height - 40f;

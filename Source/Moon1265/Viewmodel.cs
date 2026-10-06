@@ -15,12 +15,14 @@ namespace Moon1265
         private const int ViewmodelLayer = 22;
 
         private static readonly Vector3 HipPosition = new Vector3(0.2f, -0.18f, 0.38f);
-        // The rear sight sits 0.06 above the gun's origin, so this lines it up with the screen centre.
-        private static readonly Vector3 AimPosition = new Vector3(0f, -0.06f, 0.3f);
+        // Aimed down sights the front post's tip sits just under the screen centre (a "6 o'clock hold"),
+        // so the sights never cover what you're shooting at.
+        private static readonly Vector3 AimPosition = new Vector3(0f, -0.073f, 0.3f);
         private static readonly Vector3 SprintPosition = new Vector3(0.12f, -0.24f, 0.32f);
         private static readonly Quaternion SprintRotation = Quaternion.Euler(10f, -35f, 15f);
 
         private readonly Camera mainCamera;
+        private readonly int savedMainCullingMask;
         private readonly Camera camera;
         private readonly GameObject root;
         private readonly Transform muzzle;
@@ -38,6 +40,9 @@ namespace Moon1265
         public Viewmodel(Camera mainCamera)
         {
             this.mainCamera = mainCamera;
+            // Only our camera may draw the rifle; a copy drawn by the world camera would be clipped.
+            savedMainCullingMask = mainCamera.cullingMask;
+            mainCamera.cullingMask &= ~(1 << ViewmodelLayer);
 
             var cameraObject = new GameObject("Moon1265_ViewmodelCamera");
             cameraObject.transform.SetParent(mainCamera.transform, false);
@@ -136,6 +141,8 @@ namespace Moon1265
 
         public void Destroy()
         {
+            if (mainCamera != null && (savedMainCullingMask & (1 << ViewmodelLayer)) != 0)
+                mainCamera.cullingMask |= 1 << ViewmodelLayer;
             if (camera != null) Object.Destroy(camera.gameObject);
             if (tracer != null) Object.Destroy(tracer.gameObject);
         }

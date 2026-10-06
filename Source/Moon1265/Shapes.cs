@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -7,9 +8,14 @@ namespace Moon1265
     internal static class Shapes
     {
         private static Shader shader;
+        // One material per colour, shared by everything, so bullet impacts don't leak materials.
+        private static readonly Dictionary<Color, Material> materials = new Dictionary<Color, Material>();
 
         public static Material Material(Color color)
         {
+            Material cached;
+            if (materials.TryGetValue(color, out cached) && cached != null) return cached;
+
             if (shader == null)
             {
                 string[] candidates = { "KSP/Unlit", "KSP/Emissive/Diffuse", "KSP/Diffuse", "Unlit/Color", "Standard" };
@@ -19,7 +25,9 @@ namespace Moon1265
                     if (shader != null) break;
                 }
             }
-            return new Material(shader) { color = color };
+            cached = new Material(shader) { color = color };
+            materials[color] = cached;
+            return cached;
         }
 
         /// <summary>Creates a primitive with no collider (purely visual).</summary>
