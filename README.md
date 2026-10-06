@@ -1,6 +1,6 @@
 # Moon1265: Dethmun
 
-A new moon for Kerbin in **Kerbal Space Program 1** (1.8 to 1.12): a perfectly flat, grey moon
+A new moon for Kerbin for **Kerbal Space Program 1.12.5**: a perfectly flat, grey moon
 with a trench running all the way around its equator, Death Star style.
 
 The challenge it's built for: EVA a Kerbal from the surface, use the jetpack to
@@ -31,8 +31,9 @@ Handy numbers for the trench run:
 
 ## Installing
 
-1. Install [Kopernicus](https://github.com/Kopernicus/Kopernicus) for your KSP version
-   (CKAN works). It includes ModuleManager.
+1. Install the KSP 1.12.x release of [Kopernicus](https://github.com/Kopernicus/Kopernicus/releases)
+   together with its dependencies, ModuleManager and ModularFlightIntegrator.
+   CKAN (with your game set to 1.12.5) installs all three for you.
 2. Copy `GameData/Moon1265` into your KSP `GameData` folder.
 3. Start the game. Dethmun shows up in the Tracking Station orbiting Kerbin.
 
@@ -58,6 +59,7 @@ the map-view mesh gets rebuilt.
 ```
 GameData/Moon1265/
   Dethmun.cfg                 Kopernicus body definition
+  Moon1265.version            KSP-AVC version file (KSP 1.12.5)
   PluginData/height.png       heightmap (white = surface, black = trench)
   PluginData/surface_color.png  ground colour close up
   PluginData/biomes.png       biome map
