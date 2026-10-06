@@ -151,9 +151,9 @@ namespace Moon1265
 
             Vector3 normal;
             float gap = GroundGap(up, out normal);
-            // Our own floor probe decides; KSP's state is only trusted as a looser fallback in case the
+            // Our own floor probe decides; KSP's state only widens the margin slightly, in case the
             // probe's idea of where the feet are is a little off.
-            bool onFloor = gap < GroundedGap || (gap < 0.5f && state != eva.st_idle_fl);
+            bool onFloor = gap < GroundedGap || (gap < GroundedGap + 0.1f && state != eva.st_idle_fl);
             if (onFloor && Time.fixedTime >= jumpGraceUntil) lastGroundedTime = Time.fixedTime;
             Grounded = lastGroundedTime >= 0f && Time.fixedTime - lastGroundedTime < CoyoteTime;
 

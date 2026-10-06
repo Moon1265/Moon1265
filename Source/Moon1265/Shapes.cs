@@ -147,10 +147,16 @@ namespace Moon1265
         {
             GameObject go = Visual(type, parent, localPosition, Quaternion.identity, localScale, color);
             MeshFilter filter = go.GetComponent<MeshFilter>();
-            Mesh mesh = Object.Instantiate(filter.sharedMesh);
-            var colors = new Color[mesh.vertexCount];
-            for (int i = 0; i < colors.Length; i++) colors[i] = color;
-            mesh.colors = colors;
+            string key = "glow/" + type + "/" + color;
+            Mesh mesh;
+            if (!shadedMeshes.TryGetValue(key, out mesh) || mesh == null)
+            {
+                mesh = Object.Instantiate(filter.sharedMesh);
+                var colors = new Color[mesh.vertexCount];
+                for (int i = 0; i < colors.Length; i++) colors[i] = color;
+                mesh.colors = colors;
+                shadedMeshes[key] = mesh;   // cached, so entering MW2 mode again doesn't leak meshes
+            }
             filter.sharedMesh = mesh;
             go.GetComponent<Renderer>().sharedMaterial = Glow();
             return go;

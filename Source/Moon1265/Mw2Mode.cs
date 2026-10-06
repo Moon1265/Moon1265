@@ -66,6 +66,7 @@ namespace Moon1265
         private int partsDestroyed;
 
         private bool uiHidden;
+        private bool cursorLockedByUs;
 
         private GUIStyle bigText;
         private GUIStyle smallText;
@@ -274,7 +275,7 @@ namespace Moon1265
         {
             // Give KSP its controls back first, whatever else happens.
             InputLockManager.RemoveControlLock(LockId);
-            SetCursorLocked(false);
+            if (cursorLockedByUs) SetCursorLocked(false);
             if (!active) return;
             active = false;
 
@@ -333,10 +334,13 @@ namespace Moon1265
             hiddenRenderers.Clear();
         }
 
-        private static void SetCursorLocked(bool locked)
+        private void SetCursorLocked(bool locked)
         {
+            // Only ever release a cursor we locked, so KSP's own mouse-look isn't disturbed.
+            if (!locked && !cursorLockedByUs) return;
             Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;
             Cursor.visible = !locked;
+            cursorLockedByUs = locked;
         }
 
         // ---------------------------------------------------------------- input and camera
