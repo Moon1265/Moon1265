@@ -63,6 +63,7 @@ namespace Moon1265
         private float slideStartedAt;
         private float nextSlideAllowedAt;
         private float tacticalLeft = -1f;   // seconds of tactical sprint left (-1 = not initialised)
+        private bool tacticalSpent;         // ran out: normal sprint until the player double-taps again
 
         public CombatMovement(KerbalEVA eva)
         {
@@ -208,6 +209,12 @@ namespace Moon1265
             bool jump = input.Jump && Grounded;
             if (wish != Vector3.zero || jump || Sliding) Unanchor();
 
+            // A slide that runs into something (a wall, a rock, a vessel) stops, instead of being
+            // pushed back into it at full speed every step.
+            if (Grounded && Sliding && Time.fixedTime > slideStartedAt
+                && Vector3.Dot(groundVelocity, Vector3.ProjectOnPlane(slideDirection, normal).normalized) < slideSpeed * 0.5f)
+                EndSlide();
+
             if (Grounded && Sliding)
             {
                 // Friction slows the slide; slopes speed it up or slow it down; a little steering.
@@ -215,8 +222,13 @@ namespace Moon1265
                 Vector3 downhill = Vector3.ProjectOnPlane(-up, normal);
                 slideSpeed += (Vector3.Dot(downhill, slideDirection) * gravity - Settings.SlideFriction) * dt;
                 if (wish != Vector3.zero)
-                    slideDirection = Vector3.RotateTowards(slideDirection, Vector3.ProjectOnPlane(wish, up).normalized,
-                        Settings.SlideSteering * Mathf.Deg2Rad * dt, 0f);
+                {
+                    // Turn about "up" only, so the slide stays level whatever the steering.
+                    Vector3 target = Vector3.ProjectOnPlane(wish, up).normalized;
+                    float maxTurn = Settings.SlideSteering * dt;
+                    float turn = Mathf.Clamp(Vector3.SignedAngle(slideDirection, target, up), -maxTurn, maxTurn);
+                    slideDirection = Quaternion.AngleAxis(turn, up) * slideDirection;
+                }
 
                 velocity = Vector3.ProjectOnPlane(slideDirection, normal).normalized * Mathf.Max(slideSpeed, 0f)
                     + normal * Mathf.Min(Vector3.Dot(velocity, normal), 0f);
@@ -237,7 +249,10 @@ namespace Moon1265
             {
                 if (Sliding) EndSlide(); // went over an edge: keep the momentum, as a fall
                 Vector3 vertical = Vector3.Project(velocity, up);
-                Vector3 horizontal = Vector3.MoveTowards(velocity - vertical, wish * speed, Settings.AirAcceleration * dt);
+                Vector3 flat = velocity - vertical;
+                // Steer, and speed up to `speed`, but never take away speed we already carry
+                // (slide-cancel jumps, sprint jumps). With no keys held this still slows to a stop.
+                Vector3 horizontal = Vector3.MoveTowards(flat, wish * Mathf.Max(speed, flat.magnitude), Settings.AirAcceleration * dt);
                 velocity = horizontal + vertical;
             }
 
@@ -251,7 +266,9 @@ namespace Moon1265
             }
 
             rb.velocity = velocity;
-            HorizontalSpeed = Vector3.ProjectOnPlane(velocity, up).magnitude;
+            // What the Kerbal actually did last step (not what we asked for), so being pinned against
+            // a wall doesn't count as moving.
+            HorizontalSpeed = Mathf.Min(Vector3.ProjectOnPlane(velocity, up).magnitude, Vector3.ProjectOnPlane(groundVelocity, up).magnitude + 0.5f);
 
             // Top gravity up to CombatGravity near the ground, so low-gravity moons still play like
             // ground combat. Not in orbit or high above the terrain (e.g. on a space station).
@@ -269,16 +286,34 @@ namespace Moon1265
         {
             float duration = Settings.TacticalSprintDuration;
             if (tacticalLeft < 0f) tacticalLeft = duration;
+            if (!input.TacticalSprint) tacticalSpent = false;
 
-            bool canSprint = Grounded && !Sliding && !input.Crouch && !input.Aiming && !input.Firing && input.Move.y > 0.1f;
-            bool wantsTactical = canSprint && input.TacticalSprint && (duration <= 0f || tacticalLeft > 0f);
+            // Starting a sprint needs the ground; a sprint already going carries through a jump.
+            bool carry = !Grounded && (Sprinting || TacticalSprinting);
+            bool canSprint = (Grounded || carry) && !Sliding && !input.Crouch && !input.Aiming && !input.Firing && input.Move.y > 0.1f;
 
-            if (wantsTactical && duration > 0f)
-                tacticalLeft = Mathf.Max(0f, tacticalLeft - dt);
-            else if (!wantsTactical && duration > 0f && Settings.TacticalSprintRecharge > 0f)
-                tacticalLeft = Mathf.Min(duration, tacticalLeft + dt * duration / Settings.TacticalSprintRecharge);
+            // Needs a little charge to start (so a double-tap right after running out doesn't blip),
+            // and once it runs out it stays off until the player lets go and double-taps again.
+            bool hasCharge = duration <= 0f || tacticalLeft > (TacticalSprinting ? 0f : Mathf.Min(0.5f, duration));
+            bool wantsTactical = canSprint && input.TacticalSprint && !tacticalSpent && hasCharge;
 
-            TacticalSprinting = wantsTactical;
+            if (duration > 0f)
+            {
+                if (wantsTactical)
+                {
+                    if (Grounded) tacticalLeft = Mathf.Max(0f, tacticalLeft - dt);
+                    if (tacticalLeft <= 0f) tacticalSpent = true;
+                }
+                else if (!input.TacticalSprint)
+                {
+                    // Recharges only once the player has let go of the tactical sprint.
+                    tacticalLeft = Settings.TacticalSprintRecharge > 0f
+                        ? Mathf.Min(duration, tacticalLeft + dt * duration / Settings.TacticalSprintRecharge)
+                        : duration;
+                }
+            }
+
+            TacticalSprinting = wantsTactical && !tacticalSpent;
             Sprinting = canSprint && (input.Sprint || input.TacticalSprint);
         }
 

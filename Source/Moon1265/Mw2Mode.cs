@@ -49,6 +49,13 @@ namespace Moon1265
         private bool tacticalLatched;    // sprint was double-tapped and is still held
         private float lastSprintTapAt = -10f;
         private float speedFov;          // 0..1, smoothed extra FOV while tactical sprinting or sliding
+        private float viewSlide;         // 0..1, slide blend smoothed per rendered frame (physics runs slower)
+        private float viewCrouch;        // 0..1, crouch blend smoothed per rendered frame
+        private bool fireQueued;         // a click while the rifle was still coming out of a sprint
+        private float fireQueuedUntil;
+        private float savedNearClip;
+        // KSP's own IVA value; low enough that the ground isn't clipped when sliding with the eye near the floor.
+        private const float NearClip = 0.1f;
 
         private Viewmodel viewmodel;
         private AudioSource audioSource;
@@ -145,6 +152,8 @@ namespace Moon1265
 
             ReadMovementInput();
             UpdateLook();
+            viewSlide = Mathf.MoveTowards(viewSlide, movement.Sliding ? 1f : 0f, Time.deltaTime * 8f);
+            viewCrouch = Mathf.MoveTowards(viewCrouch, moveInput.Crouch || movement.Sliding ? 1f : 0f, Time.deltaTime * 6f);
             PlaceCamera();   // this frame's view, so shots go where the crosshair is now
             UpdateWeapon();
         }
@@ -164,11 +173,12 @@ namespace Moon1265
 
             // Re-assert our hold on the camera every frame; some KSP paths quietly switch it back on.
             if (flightCamera.updateActive) flightCamera.DeactivateUpdate();
+            if (mainCamera.nearClipPlane > NearClip) mainCamera.nearClipPlane = NearClip; // KSP resets it on camera changes
             KeepCameraFrameCurrent();
 
             PlaceCamera();
             viewmodel.Animate(aim, reloading, movement.Sprinting && !movement.TacticalSprinting, movement.TacticalSprinting,
-                movement.SlideBlend, movement.Grounded ? movement.HorizontalSpeed : 0f, Time.deltaTime);
+                viewSlide, movement.Grounded ? movement.HorizontalSpeed : 0f, Time.deltaTime);
         }
 
         // ---------------------------------------------------------------- entering / leaving
@@ -229,6 +239,7 @@ namespace Moon1265
             savedLocalPosition = cameraRig.localPosition;
             savedLocalRotation = cameraRig.localRotation;
             savedFov = flightCamera.FieldOfView;
+            savedNearClip = mainCamera.nearClipPlane;
 
             // If KSP's own mouse-look mode is on, switch it off so it doesn't fight ours for the cursor.
             if (CameraMouseLook.MouseLocked) CameraMouseLook.SetMouseLook(false);
@@ -269,7 +280,8 @@ namespace Moon1265
 
             moveInput = default(MoveInput);
             tacticalLatched = false;
-            speedFov = 0f;
+            speedFov = viewSlide = viewCrouch = 0f;
+            fireQueued = false;
             aim = 0f;
             bloom = 0f;
             reloading = false;
@@ -305,7 +317,11 @@ namespace Moon1265
             if (flightCamera != null)
             {
                 bool inFlightView = cameraManager == null || cameraManager.currentCameraMode == CameraManager.CameraMode.Flight;
-                if (inFlightView) flightCamera.SetFoV(savedFov);
+                if (inFlightView)
+                {
+                    flightCamera.SetFoV(savedFov);
+                    if (mainCamera != null) mainCamera.nearClipPlane = savedNearClip;
+                }
                 else flightCamera.FieldOfView = savedFov; // KSP reapplies it when returning to the flight camera
                 flightCamera.ActivateUpdate();
             }
@@ -359,7 +375,15 @@ namespace Moon1265
             moveInput.Move = new Vector2(x, y);
             moveInput.Crouch = Input.GetKey(Settings.CrouchKey) || Input.GetKey(Settings.CrouchKeyAlt);
             moveInput.Aiming = Input.GetMouseButton(1) && !reloading;
-            moveInput.Firing = Input.GetMouseButton(0);
+            // A click while the rifle is still coming out of a sprint is remembered briefly and fired
+            // as soon as the rifle is up, instead of being lost.
+            if (Input.GetMouseButtonDown(0) && !viewmodel.ReadyToFire && !reloading)
+            {
+                fireQueued = true;
+                fireQueuedUntil = Time.time + 0.3f;
+            }
+            if (fireQueued && Time.time > fireQueuedUntil) fireQueued = false;
+            moveInput.Firing = Input.GetMouseButton(0) || fireQueued;
 
             // Sprint is hold-to-sprint. A quick double tap (tap, then press and hold) is a tactical sprint.
             bool sprintHeld = Input.GetKey(Settings.SprintKey);
@@ -402,7 +426,7 @@ namespace Moon1265
         private void PlaceCamera()
         {
             Vector3 up = Up();
-            float slide = movement != null ? movement.SlideBlend : 0f;
+            float slide = viewSlide;
             Quaternion look = Quaternion.LookRotation(lookForward, up) * Quaternion.Euler(pitch, 0f, Settings.SlideCameraTilt * slide);
 
             // Physics runs at a fixed rate; carry the body forward by its velocity since the last
@@ -411,8 +435,7 @@ namespace Moon1265
             Vector3 body = kerbal.transform.position;
             if (rb != null) body += rb.velocity * (Time.time - Time.fixedTime);
 
-            float eyeHeight = Settings.EyeHeight - Settings.CrouchEyeDrop * (movement != null ? movement.Crouch : 0f)
-                - Settings.SlideEyeDrop * slide;
+            float eyeHeight = Settings.EyeHeight - Settings.CrouchEyeDrop * viewCrouch - Settings.SlideEyeDrop * slide;
             Vector3 eye = body + up * eyeHeight;
 
             // The FlightCamera component may sit above the rendering camera in the hierarchy,
@@ -448,8 +471,10 @@ namespace Moon1265
             }
 
             // The rifle has to come down out of the sprint pose before it can fire.
-            if (Input.GetMouseButton(0) && Time.time >= nextShotAt && viewmodel.ReadyToFire)
+            bool trigger = Input.GetMouseButton(0) || fireQueued;
+            if (trigger && Time.time >= nextShotAt && viewmodel.ReadyToFire)
             {
+                fireQueued = false;
                 if (ammo > 0)
                 {
                     Fire();
@@ -464,6 +489,7 @@ namespace Moon1265
 
         private void StartReload()
         {
+            fireQueued = false;
             reloading = true;
             reloadDoneAt = Time.time + Settings.ReloadTime;
             Play(Sounds.Reload, 1f);
