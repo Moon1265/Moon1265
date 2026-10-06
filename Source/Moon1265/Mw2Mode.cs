@@ -227,6 +227,9 @@ namespace Moon1265
             savedLocalRotation = cameraRig.localRotation;
             savedFov = flightCamera.FieldOfView;
 
+            // If KSP's own mouse-look mode is on, switch it off so it doesn't fight ours for the cursor.
+            if (CameraMouseLook.MouseLocked) CameraMouseLook.SetMouseLook(false);
+
             InputLockManager.SetControlLock(LockedControls, LockId);
             active = true;
             try
